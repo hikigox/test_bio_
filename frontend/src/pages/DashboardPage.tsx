@@ -7,20 +7,34 @@ import { getAnomalies } from "../api/anomalies";
 import type { DashboardSummary, AnomalySummary } from "../api/types";
 import { formatNumberEsES, meterColor, severityColor } from "../lib/format";
 import RunAnalysisButton from "../components/RunAnalysisButton";
+import ErrorState from "../components/ErrorState";
+
+// Shared by the pie's Tooltip and Legend so both show the same "kWh (%)"
+// wording for a by_meter entry.
+function formatByMeterShare(consumptionKWh: number, sharePct: number | undefined) {
+  const pct = typeof sharePct === "number" ? ` (${sharePct.toFixed(1)} %)` : "";
+  return `${formatNumberEsES(consumptionKWh)} kWh${pct}`;
+}
 
 export default function DashboardPage() {
   const { range } = useDateRange();
   const navigate = useNavigate();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [topAnomalies, setTopAnomalies] = useState<(AnomalySummary & { meter_id: string })[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   function load() {
-    getDashboardSummary(range.from, range.to).then(setSummary);
-    getAnomalies({ from: range.from, to: range.to }).then((r) => setTopAnomalies(r.items.slice(0, 5)));
+    Promise.all([
+      getDashboardSummary(range.from, range.to).then(setSummary),
+      getAnomalies({ from: range.from, to: range.to }).then((r) => setTopAnomalies(r.items.slice(0, 5))),
+    ])
+      .then(() => setError(null))
+      .catch(() => setError("No se pudo cargar el dashboard."));
   }
 
   useEffect(load, [range.from, range.to]);
 
+  if (error && !summary) return <ErrorState message={error} onRetry={load} />;
   if (!summary) return <div>Cargando…</div>;
 
   return (
@@ -31,7 +45,10 @@ export default function DashboardPage() {
         <Kpi label="Anomalías IA" value={summary.anomalies} />
         <Kpi label="Alta prioridad" value={summary.high_priority} />
         <Kpi label="Confianza IA" value={`${Math.round(summary.avg_confidence * 100)}%`} />
-        <Kpi label="Último análisis" value={summary.data_range.to.slice(0, 10)} />
+        <Kpi
+          label="Último análisis"
+          value={summary.last_analysis ? summary.last_analysis.at.slice(0, 16).replace("T", " ") : "Sin análisis"}
+        />
       </div>
 
       <RunAnalysisButton onComplete={load} />
@@ -54,13 +71,22 @@ export default function DashboardPage() {
             ))}
           </Pie>
           <Tooltip
-            formatter={(v, _name, item) => {
-              const sharePct = item?.payload?.share_pct;
-              const pct = typeof sharePct === "number" ? ` (${sharePct.toFixed(1)} %)` : "";
-              return [`${formatNumberEsES(Number(v))} kWh${pct}`, item?.payload?.meter_id];
+            formatter={(v, _name, item) => [
+              formatByMeterShare(Number(v), item?.payload?.share_pct),
+              item?.payload?.meter_id,
+            ]}
+          />
+          <Legend
+            onClick={(entry) => navigate(`/meters/${entry.value}`)}
+            formatter={(value, entry) => {
+              // recharts' Legend payload item carries the original Pie datum
+              // in `payload`, but its declared type is a bare `object`.
+              const payload = entry?.payload as { consumption_kwh?: number; share_pct?: number } | undefined;
+              const consumptionKWh = payload?.consumption_kwh ?? 0;
+              const sharePct = payload?.share_pct;
+              return `${value}: ${formatByMeterShare(consumptionKWh, sharePct)}`;
             }}
           />
-          <Legend onClick={(entry) => navigate(`/meters/${entry.value}`)} />
         </PieChart>
       </div>
 
@@ -69,8 +95,9 @@ export default function DashboardPage() {
         {topAnomalies.length === 0 && <p className="text-sm text-slate-400">Sin análisis</p>}
         <ul className="divide-y">
           {topAnomalies.map((a) => (
-            <li key={a.id} className="py-2 flex justify-between cursor-pointer" onClick={() => navigate(`/anomalies/${a.id}`)}>
+            <li key={a.id} className="py-2 flex justify-between items-center cursor-pointer" onClick={() => navigate(`/anomalies/${a.id}`)}>
               <span>{a.meter_id}</span>
+              <span className="text-xs text-slate-500">{a.active_from.slice(0, 10)} – {a.active_to.slice(0, 10)}</span>
               <span className={`px-2 py-0.5 rounded text-xs ${severityColor(a.severity)}`}>{a.severity}</span>
             </li>
           ))}

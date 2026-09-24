@@ -126,6 +126,7 @@ export interface DashboardSummary {
   anomalies: number;
   high_priority: number;
   avg_confidence: number;
+  last_analysis: { at: string; status: string } | null;
   by_meter: {
     meter_id: string;
     consumption_kwh: number;
