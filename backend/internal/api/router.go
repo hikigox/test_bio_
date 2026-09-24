@@ -35,7 +35,3 @@ func NewRouter(s *Server) http.Handler {
 
 	return r
 }
-
-// Stub functions for later tasks
-func registerAnomalyRoutes(r chi.Router, s *Server)   {}
-func registerDashboardRoutes(r chi.Router, s *Server) {}

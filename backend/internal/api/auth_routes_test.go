@@ -115,16 +115,11 @@ func TestProtectedRouteRequiresAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	// NOTE: no real route is registered under the protected group yet
-	// (registerMeterRoutes/registerAnomalyRoutes/registerAnalysisRoutes/
-	// registerDashboardRoutes are all empty stubs owned by later tasks), so
-	// chi's router never matches this path and falls straight to the JSON
-	// 404 handler without ever entering the requireAuth middleware chain
-	// (chi's NotFoundHandler is not wrapped by group-scoped middleware).
-	// This is expected to become 401 once a real protected route exists
-	// (Task 7). requireAuth's own behavior is covered directly below.
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 (no protected route registered yet), got %d", rec.Code)
+	// GET /api/dashboard/summary is now a real, routed, protected endpoint
+	// (Task 7), so an unauthenticated request must be rejected by
+	// requireAuth's middleware chain before ever reaching the handler.
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (no auth header on protected route), got %d", rec.Code)
 	}
 }
 
