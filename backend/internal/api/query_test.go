@@ -62,6 +62,38 @@ func TestCurrentAnomalyReturnsNilWhenNeverAnalyzed(t *testing.T) {
 	}
 }
 
+func TestCurrentAnomalyReturnsNilWhenMeterNormalizedInLatestAnalysis(t *testing.T) {
+	db, _ := store.Open(":memory:")
+	defer db.Close()
+	db.Migrate()
+
+	// Análisis viejo (#1, COMPLETED): M-109 tuvo anomalía.
+	setupAnalysisWithAnomaly(t, db)
+
+	// Análisis nuevo (#2, COMPLETED, más reciente): M-109 fue incluido
+	// (tiene fila en meter_baselines) pero ya no es anómalo (sin fila en
+	// anomalies). El medidor se normalizó; vigencia debe reflejar eso.
+	res, err := db.Exec(`INSERT INTO analyses (status, data_from, data_to, finished_at)
+		VALUES ('COMPLETED', '2026-09-15T00:00:00Z', '2026-09-28T23:00:00Z', '2026-09-28T23:00:00Z')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newAnalysisID, _ := res.LastInsertId()
+	_, err = db.Exec(`INSERT INTO meter_baselines (analysis_id, meter_id, method, hourly_profile_json, baseline_kwh, actual_kwh, variation_pct)
+		VALUES (?, 'M-109', 'HOURLY_MEDIAN', ?, 1070, 1100, 2.8)`, newAnalysisID, hourlyProfileJSONFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	anomaly, err := CurrentAnomaly(db, "M-109")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if anomaly != nil {
+		t.Fatalf("expected nil (meter normalized in latest analysis, stale old anomaly must not leak), got %+v", anomaly)
+	}
+}
+
 func TestActiveWindowUsesChangePointWhenPresent(t *testing.T) {
 	a := AnomalyRow{
 		PeriodFrom:    time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
