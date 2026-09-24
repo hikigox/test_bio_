@@ -8,7 +8,7 @@ const PRESETS: { value: Preset; label: string }[] = [
 ];
 
 export default function DateRangeControl() {
-  const { preset, setPreset, range, setCustomRange } = useDateRange();
+  const { preset, setPreset, range, dataRange, setCustomRange } = useDateRange();
 
   return (
     <div className="flex items-center gap-2">
@@ -24,10 +24,18 @@ export default function DateRangeControl() {
       {preset === "custom" && (
         <>
           <input type="date" value={range.from.slice(0, 10)}
-            onChange={(e) => setCustomRange(new Date(e.target.value).toISOString(), range.to)}
+            min={dataRange.from.slice(0, 10)} max={dataRange.to.slice(0, 10)}
+            onChange={(e) => {
+              if (!e.target.value) return;
+              setCustomRange(new Date(e.target.value).toISOString(), range.to);
+            }}
             className="border rounded px-2 py-1 text-sm" />
           <input type="date" value={range.to.slice(0, 10)}
-            onChange={(e) => setCustomRange(range.from, new Date(e.target.value).toISOString())}
+            min={dataRange.from.slice(0, 10)} max={dataRange.to.slice(0, 10)}
+            onChange={(e) => {
+              if (!e.target.value) return;
+              setCustomRange(range.from, new Date(e.target.value).toISOString());
+            }}
             className="border rounded px-2 py-1 text-sm" />
         </>
       )}
