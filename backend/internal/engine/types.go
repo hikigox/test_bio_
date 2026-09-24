@@ -106,3 +106,39 @@ type DataQualityIssue struct {
 	Kind  string
 	Count int
 }
+
+// Event es un evento operativo reportado para un medidor (nueva línea de
+// producción, parada programada, etc.), usado para explicar cambios de consumo.
+type Event struct {
+	MeterID     string
+	Timestamp   time.Time // UTC
+	Type        string    // p.ej. OPERATIONAL_CHANGE, SCHEDULED_OUTAGE, DATA_QUALITY, UNKNOWN
+	Description string
+}
+
+// VariableDelta compara una variable eléctrica antes y después del punto de
+// cambio, para alimentar evidence.variables (02 §3).
+type VariableDelta struct {
+	Variable string // consumption_kwh | voltage_v | current_a | power_factor
+	Baseline float64
+	Actual   float64
+	DeltaPct float64
+	Changed  bool
+}
+
+// EventRelation indica si un evento cercano explica semánticamente el cambio
+// observado (Explains) o si solo coincide en el tiempo (Related).
+type EventRelation string
+
+const (
+	Explains EventRelation = "EXPLAINS"
+	Related  EventRelation = "RELATED"
+)
+
+// RelatedEvent es un evento dentro de la ventana ±24h del punto de cambio,
+// con su relación con el cambio y su desfase en horas (negativo = anterior).
+type RelatedEvent struct {
+	Event       Event
+	Relation    EventRelation
+	OffsetHours float64
+}
