@@ -9,8 +9,7 @@ Priorización → Acción**.
 ### Con Docker (recomendado)
 
 ```bash
-cp .env.example .env   # ajustar si hace falta; los defaults funcionan para la demo
-make up
+make up   # los defaults en docker-compose.yml funcionan para la demo sin .env
 ```
 
 Login en `http://localhost:3000` con el usuario demo:
@@ -91,10 +90,12 @@ server de Vite lo redirige a `:8080` (ver `vite.config.ts`); en producción
   la explicación es siempre por plantillas. La spec original marca esto como
   opcional ("LLM opcional solo para redactar la explicación; nunca decide ni
   inventa cifras") — quedó fuera de alcance del MVP, no es un bug.
-- **Sin smoke test end-to-end todavía**: no hay un test automatizado de
-  browser real para el flujo principal — solo tests unitarios (Vitest) y
-  revisión manual. Planeado como parte del cierre de esta fase (ver Task 3
-  del plan `docs/superpowers/plans/2026-09-24-cierre-demo.md`).
+- **Smoke test e2e sin integrar a CI**: hay un smoke test de Playwright del
+  flujo principal (login → correr análisis → investigación de anomalía) en
+  `frontend/e2e/demo-flow.spec.ts`, que se ejecuta manualmente con
+  `npm run test:e2e` desde `frontend/` (arranca automáticamente los
+  servidores de backend y frontend vía la config `webServer` de Playwright).
+  Todavía no está conectado a ningún pipeline de CI.
 - **Bundle de frontend sin code-splitting**: ~675kB minificado en un solo
   chunk (`npm run build` avisa sobre esto). No afecta la demo; sería el
   primer punto de optimización si esto pasara a producción real.
@@ -108,6 +109,7 @@ server de Vite lo redirige a `:8080` (ver `vite.config.ts`); en producción
 ```bash
 cd backend && go test ./...
 cd frontend && npx tsc -b --force && npx vitest run
+cd frontend && npm run test:e2e
 ```
 
 `make test` corre los tests de backend dentro de un contenedor Docker
