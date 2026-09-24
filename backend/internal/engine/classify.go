@@ -138,6 +138,27 @@ func dataQualityStrengthFraction(signals []Signal) float64 {
 	return minFloat(best/strongInconsistencyFactor, 1)
 }
 
+// dataQualityMagnitude mide la severidad de una anomalía DATA_QUALITY para
+// PriorityScore (02 §6, "DATA_QUALITY... usan magnitud normalizada propia"):
+// el mayor |Observed| entre las señales ElectricalInconsistency/DataQuality
+// que dispararon, en el mismo porcentaje en el que ya vienen esas señales
+// (Signal.Observed), para que sea comparable a variationPct en PriorityScore.
+// Se elige sobre dataQualityStrengthFraction (que normaliza a [0,1] contra el
+// umbral) porque PriorityScore ya hace su propia normalización con /100; pasar
+// una fracción ya normalizada la aplastaría dos veces.
+func dataQualityMagnitude(signals []Signal) float64 {
+	best := 0.0
+	for _, s := range signals {
+		if s.Signal != ElectricalInconsistency && s.Signal != DataQuality {
+			continue
+		}
+		if v := abs(s.Observed); v > best {
+			best = v
+		}
+	}
+	return best
+}
+
 // computeConfidence combina los cuatro términos de 02 §7 y redondea a 2
 // decimales. El máximo es 1.0 (0.4 + 0.3 + 0.2 + 0.1):
 //

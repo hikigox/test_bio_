@@ -173,3 +173,136 @@ type ConfidenceBreakdown struct {
 	EventPresence     float64 // 0 o 0.2: el cuadro de eventos es concluyente
 	DataQuality       float64 // 0 o 0.1: el medidor no tiene datos defectuosos
 }
+
+// Evidence agrupa la traza de decisión de un análisis (02 §9, evidence_json de
+// 03-api.md), para que la clasificación sea auditable.
+type Evidence struct {
+	DecisionPath          []string
+	ConfidenceBreakdown   ConfidenceBreakdown
+	DataQualityIssues     []DataQualityIssue
+	AffectedReadingsCount int
+	AffectedReadingsFirst time.Time
+	AffectedReadingsLast  time.Time
+}
+
+// MeterResult es el resultado completo del pipeline (02 §1-9) para un medidor
+// en un período de análisis: la salida pública de Run que consumirá la fase API.
+type MeterResult struct {
+	MeterID     string
+	Baseline    HourlyProfile
+	ChangePoint ChangePoint
+	Thresholds  MeterThresholds
+
+	BaselineKWh  float64
+	ActualKWh    float64
+	VariationPct float64
+
+	Signals   []Signal
+	Variables []VariableDelta
+	Events    []RelatedEvent
+
+	HasAnomaly bool
+	Type       AnomalyType
+	Severity   Severity
+	// Confidence es el float crudo (02 §7); la etiqueta Baja/Media/Alta
+	// (<0.6 / 0.6-0.85 / >0.85) se deriva de este valor en la fase API, que es
+	// quien construye la respuesta HTTP — el motor no decide presentación.
+	Confidence    float64
+	PriorityScore float64
+
+	Reason            string
+	RecommendedAction string
+	Evidence          Evidence
+}
+
+// Run ejecuta el pipeline completo de 02 §1-9 para un medidor: baseline,
+// umbrales, detección de señales, correlación de variables, emparejamiento de
+// eventos, clasificación y explicación por plantilla.
+//
+// events puede contener eventos de otros medidores (p.ej. si el llamador pasa
+// la tabla completa de eventos del período); Run filtra por meterID antes de
+// pasarlos a MatchEvents, porque MatchEvents solo compara por ventana de
+// tiempo y no conoce el medidor — sin este filtro, dos medidores con eventos
+// propios en ventanas de tiempo similares podrían "robarse" eventos entre sí.
+func Run(meterID string, readings []Reading, events []Event, fleetCV float64, cfg Config) MeterResult {
+	if len(readings) == 0 {
+		// Sin lecturas no hay nada que analizar; devolver un resultado vacío en
+		// vez de indexar readings[0] más abajo (que entraría en pánico).
+		return MeterResult{MeterID: meterID}
+	}
+
+	cp := DetectChangePoint(readings, cfg)
+
+	baselineFrom := readings[0].Timestamp
+	baselineTo := baselineFrom.Add(time.Duration(cfg.DefaultBaselineDays) * 24 * time.Hour)
+	if cp.Found {
+		baselineTo = cp.At
+	}
+	profile := BuildHourlyProfile(readings, baselineFrom, baselineTo)
+	th := ComputeThresholds(readings, baselineFrom, baselineTo, fleetCV, cfg)
+
+	signals, issues := DetectSignals(readings, profile, cp, th, cfg)
+	variables := CorrelateVariables(readings, profile, cp)
+
+	actualKWh := sumKWh(readings)
+	baselineKWh := extrapolateBaseline(profile, readings)
+	variationPct := 0.0
+	if baselineKWh != 0 {
+		variationPct = (actualKWh - baselineKWh) / baselineKWh * 100
+	}
+
+	// MatchEvents solo filtra por ventana de tiempo, no por medidor: hay que
+	// acotar a los eventos de este medidor antes de llamarlo.
+	meterEvents := make([]Event, 0, len(events))
+	for _, e := range events {
+		if e.MeterID == meterID {
+			meterEvents = append(meterEvents, e)
+		}
+	}
+	relatedEvents := MatchEvents(meterEvents, cp, variationPct)
+
+	result := MeterResult{
+		MeterID: meterID, Baseline: profile, ChangePoint: cp, Thresholds: th,
+		BaselineKWh: baselineKWh, ActualKWh: actualKWh, VariationPct: round2(variationPct),
+		Signals: signals, Variables: variables, Events: relatedEvents,
+	}
+
+	typ, sev, confidence, breakdown, path := Classify(signals, issues, relatedEvents, variables, variationPct)
+	if typ == "" {
+		result.HasAnomaly = false
+		return result
+	}
+
+	// PriorityScore's magnitude term is normally variationPct, but Classify's
+	// DATA_QUALITY branch (classify.go) requires consumptionChanged == false,
+	// i.e. variationPct ≈ 0 by construction. Passing that through would score
+	// every DATA_QUALITY case identically regardless of how severe the
+	// underlying inconsistency actually is. Spec 02§6 explicitly allows a
+	// type-specific magnitude here ("DATA_QUALITY y FALSE_POSITIVE usan
+	// magnitud normalizada propia"), so for DATA_QUALITY we substitute the
+	// largest |Observed| among the firing ElectricalInconsistency/DataQuality
+	// signals — the same magnitude Classify's own confidence fix
+	// (dataQualityStrengthFraction) already uses for its strength term, kept
+	// on the same percent scale PriorityScore expects.
+	priorityMagnitude := variationPct
+	if typ == TypeDataQuality {
+		priorityMagnitude = dataQualityMagnitude(signals)
+	}
+
+	result.HasAnomaly = true
+	result.Type = typ
+	result.Severity = sev
+	result.Confidence = confidence
+	result.PriorityScore = PriorityScore(typ, sev, confidence, priorityMagnitude)
+	result.Reason = BuildReason(typ, variationPct, variables)
+	result.RecommendedAction = BuildRecommendation(typ)
+	result.Evidence = Evidence{
+		DecisionPath:          path,
+		ConfidenceBreakdown:   breakdown,
+		DataQualityIssues:     issues,
+		AffectedReadingsCount: len(readings),
+		AffectedReadingsFirst: readings[0].Timestamp,
+		AffectedReadingsLast:  readings[len(readings)-1].Timestamp,
+	}
+	return result
+}
