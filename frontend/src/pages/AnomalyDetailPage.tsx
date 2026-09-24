@@ -3,13 +3,21 @@ import { useParams } from "react-router-dom";
 import { getAnomaly, patchAnomaly } from "../api/anomalies";
 import type { AnomalyDetail } from "../api/types";
 import SeverityBadge from "../components/SeverityBadge";
+import ErrorState from "../components/ErrorState";
 
 export default function AnomalyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [anomaly, setAnomaly] = useState<AnomalyDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   function load() {
-    if (id) getAnomaly(Number(id)).then(setAnomaly);
+    if (!id) return;
+    getAnomaly(Number(id))
+      .then((data) => {
+        setAnomaly(data);
+        setError(null);
+      })
+      .catch(() => setError("No se pudo cargar la anomalía."));
   }
   useEffect(load, [id]);
 
@@ -19,7 +27,14 @@ export default function AnomalyDetailPage() {
     load();
   }
 
+  if (error && !anomaly) return <ErrorState message={error} onRetry={load} />;
   if (!anomaly) return <div>Cargando…</div>;
+
+  const decisionPath = anomaly.evidence.decision_path ?? [];
+  const dataQualityIssues = anomaly.evidence.data_quality_issues ?? [];
+  const signals = anomaly.signals ?? [];
+  const variables = anomaly.variables ?? [];
+  const events = anomaly.events ?? [];
 
   return (
     <div className="space-y-6">
@@ -29,6 +44,7 @@ export default function AnomalyDetailPage() {
           <div className="mt-2 flex gap-2 items-center">
             <SeverityBadge severity={anomaly.severity} />
             <span className="text-xs text-slate-500">Estado: {anomaly.status}</span>
+            <span className="text-xs text-slate-500">Confianza: {anomaly.confidence_label}</span>
           </div>
         </div>
         <div className="flex gap-2">
@@ -45,11 +61,22 @@ export default function AnomalyDetailPage() {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-4">
+        <h3 className="font-medium text-slate-900 mb-2">Cuándo ocurrió</h3>
+        <p className="text-sm text-slate-700">
+          {anomaly.active_from.slice(0, 16).replace("T", " ")} – {anomaly.active_to.slice(0, 16).replace("T", " ")}
+        </p>
+        <p className="text-xs text-slate-500 mt-1">Duración: {anomaly.duration_hours.toFixed(1)} h</p>
+        <p className="text-xs text-slate-500 mt-1">
+          Baseline: {anomaly.baseline_kwh.toFixed(1)} kWh · Real: {anomaly.actual_kwh.toFixed(1)} kWh · Variación: {anomaly.variation_pct.toFixed(1)}%
+        </p>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-4">
         <h3 className="font-medium text-slate-900 mb-2">Evidencia</h3>
-        <p className="text-xs text-slate-500 mb-1">Ruta de decisión: {anomaly.evidence.decision_path.join(" → ")}</p>
-        {anomaly.evidence.data_quality_issues.length > 0 && (
+        <p className="text-xs text-slate-500 mb-1">Ruta de decisión: {decisionPath.join(" → ")}</p>
+        {dataQualityIssues.length > 0 && (
           <ul className="text-xs text-slate-500">
-            {anomaly.evidence.data_quality_issues.map((iss, i) => (
+            {dataQualityIssues.map((iss, i) => (
               <li key={i}>{iss.kind}: {iss.count}</li>
             ))}
           </ul>
@@ -57,7 +84,65 @@ export default function AnomalyDetailPage() {
         <p className="text-xs text-slate-400 mt-2">
           Lecturas afectadas: {anomaly.evidence.affected_readings.count}
         </p>
+        {Object.keys(anomaly.evidence.confidence_breakdown ?? {}).length > 0 && (
+          <div className="mt-2">
+            <p className="text-xs text-slate-500 font-medium">Desglose de confianza</p>
+            <ul className="text-xs text-slate-500">
+              {Object.entries(anomaly.evidence.confidence_breakdown).map(([k, v]) => (
+                <li key={k}>{k}: {v}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
+
+      {variables.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm p-4">
+          <h3 className="font-medium text-slate-900 mb-2">Variables comparativa</h3>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-400 border-b">
+                <th className="py-1 pr-2">Variable</th>
+                <th className="py-1 pr-2">Baseline</th>
+                <th className="py-1 pr-2">Actual</th>
+                <th className="py-1 pr-2">Δ %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {variables.map((v) => (
+                <tr key={v.variable} className={v.changed ? "text-red-600 font-medium" : "text-slate-600"}>
+                  <td className="py-1 pr-2">{v.variable}</td>
+                  <td className="py-1 pr-2">{v.baseline.toFixed(2)}</td>
+                  <td className="py-1 pr-2">{v.actual.toFixed(2)}</td>
+                  <td className="py-1 pr-2">{v.delta_pct.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {signals.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm p-4">
+          <h3 className="font-medium text-slate-900 mb-2">Señales</h3>
+          <ul className="text-xs text-slate-600 space-y-1">
+            {signals.map((s, i) => (
+              <li key={i}>{s.signal}: observado {s.observed} vs. umbral {s.threshold} — {s.detail}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm p-4">
+          <h3 className="font-medium text-slate-900 mb-2">Eventos relacionados</h3>
+          <ul className="text-xs text-slate-600 divide-y">
+            {events.map((e) => (
+              <li key={e.id} className="py-1">{e.description} ({e.relation}, {e.offset_hours}h)</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

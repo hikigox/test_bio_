@@ -56,19 +56,56 @@ export interface AnomalySummary {
   active_to: string;
 }
 
+export interface AnomalySignal {
+  signal: string;
+  observed: number;
+  threshold: number;
+  detail: string;
+}
+
+export interface AnomalyVariable {
+  variable: string;
+  baseline: number;
+  actual: number;
+  delta_pct: number;
+  changed: boolean;
+}
+
+export interface AnomalyEvent {
+  id: number;
+  type: string;
+  description: string;
+  relation: string;
+  offset_hours: number;
+}
+
 export interface AnomalyDetail {
   id: number;
   meter_id: string;
   type: AnomalySummary["type"];
   severity: AnomalySummary["severity"];
   confidence: number;
+  confidence_label: string;
   status: "OPEN" | "INVESTIGATING" | "RESOLVED" | "DISMISSED";
   reason: string;
   recommended_action: string;
+  active_from: string;
+  active_to: string;
+  duration_hours: number;
+  change_point_at: string | null;
+  baseline_kwh: number;
+  actual_kwh: number;
+  variation_pct: number;
+  explanation_source: string;
+  signals: AnomalySignal[];
+  variables: AnomalyVariable[];
+  events: AnomalyEvent[];
   evidence: {
-    decision_path: string[];
+    // Both come back as JSON `null` from the backend when empty (nil Go
+    // slices), not `[]` — must be null-guarded wherever read.
+    decision_path: string[] | null;
     confidence_breakdown: Record<string, number>;
-    data_quality_issues: { kind: string; count: number }[];
+    data_quality_issues: { kind: string; count: number }[] | null;
     affected_readings: { count: number; first: string; last: string };
   };
 }

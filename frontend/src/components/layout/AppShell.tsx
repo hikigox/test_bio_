@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import DateRangeControl from "./DateRangeControl";
 import { useAuth } from "../../context/AuthContext";
+import ErrorBoundary from "../ErrorBoundary";
 
 const NAV = [
   { to: "/", label: "Dashboard", end: true },
@@ -30,7 +31,9 @@ export default function AppShell() {
           <DateRangeControl />
         </header>
         <main className="flex-1 p-6">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
