@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDateRange } from "../context/DateRangeContext";
 import { getMeters } from "../api/meters";
-import { MeterListItem } from "../api/types";
+import type { MeterListItem } from "../api/types";
 import { formatNumberEsES, formatPercent } from "../lib/format";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
