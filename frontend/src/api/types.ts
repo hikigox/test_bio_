@@ -9,6 +9,29 @@ export interface MeterListItem {
   anomaly: AnomalySummary | null;
 }
 
+// MeterDetail is the response shape of GET /meters/:meterId
+// (backend/internal/api/meters.go meterDetail): everything a MeterListItem
+// has, plus the baseline block (hourly profile + baseline V/I/PF + the
+// change point), the meter's current-period average V/I/PF, and its
+// latest_anomaly (same shape as `anomaly`, exposed separately because the
+// backend's currently-active `anomaly` field can be filtered out of range
+// while latest_anomaly always reflects the vigente analysis).
+export interface MeterDetail extends MeterListItem {
+  baseline: MeterBaselineDetail | null;
+  current_voltage: number | null;
+  current_current: number | null;
+  current_power_factor: number | null;
+  latest_anomaly: AnomalySummary | null;
+}
+
+export interface MeterBaselineDetail {
+  hourly_profile: number[];
+  voltage: number;
+  current: number;
+  power_factor: number;
+  change_point_at: string | null;
+}
+
 export interface AnomalySummary {
   id: number;
   type: "REAL_ANOMALY" | "EXPLAINABLE_ANOMALY" | "DATA_QUALITY" | "FALSE_POSITIVE";

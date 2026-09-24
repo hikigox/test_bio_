@@ -6,7 +6,15 @@ import type { AnalysisStatus } from "../api/types";
 
 const STAGES = ["READINGS", "BASELINE", "DETECTION", "CORRELATION", "EVENTS", "EXPLANATION", "RECOMMENDATION"];
 
-export default function RunAnalysisButton({ scope, onComplete }: { scope?: AnalyzeScope; onComplete: (status: AnalysisStatus) => void }) {
+export default function RunAnalysisButton({
+  scope,
+  onComplete,
+  label = "Run AI Analysis",
+}: {
+  scope?: AnalyzeScope;
+  onComplete: (status: AnalysisStatus) => void;
+  label?: string;
+}) {
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +53,7 @@ export default function RunAnalysisButton({ scope, onComplete }: { scope?: Analy
   return (
     <div>
       <button onClick={start} disabled={running} className="bg-blue-600 text-white rounded px-4 py-2 disabled:opacity-50">
-        {running ? "Analizando…" : "Run AI Analysis"}
+        {running ? "Analizando…" : label}
       </button>
       {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
       {running && status && (

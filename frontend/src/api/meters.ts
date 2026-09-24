@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { MeterListItem } from "./types";
+import type { MeterDetail, MeterListItem } from "./types";
 
 export function getMeters(params: { from?: string; to?: string; status?: string; q?: string; sort?: string; order?: string } = {}) {
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]);
@@ -8,7 +8,7 @@ export function getMeters(params: { from?: string; to?: string; status?: string;
 
 export function getMeter(meterId: string, from?: string, to?: string) {
   const q = from && to ? `?from=${from}&to=${to}` : "";
-  return apiFetch<MeterListItem>(`/api/meters/${meterId}${q}`);
+  return apiFetch<MeterDetail>(`/api/meters/${meterId}${q}`);
 }
 
 export function getMeterReadings(meterId: string, from: string, to: string) {
