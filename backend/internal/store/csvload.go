@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -36,6 +37,9 @@ func LoadReadingsCSV(db *DB, path string) (int, error) {
 		return 0, err
 	}
 	idx := colIndex(header)
+	if err := checkRequiredColumns(idx, requiredReadingsColumns, path); err != nil {
+		return 0, err
+	}
 
 	stmt, err := db.Prepare(`INSERT OR IGNORE INTO readings
 		(meter_id, timestamp, consumption_kwh, voltage_v, current_a, power_factor, status)
@@ -88,6 +92,9 @@ func LoadEventsCSV(db *DB, path string) (int, error) {
 		return 0, err
 	}
 	idx := colIndex(header) // meter_id, event_timestamp, event_type, description
+	if err := checkRequiredColumns(idx, requiredEventsColumns, path); err != nil {
+		return 0, err
+	}
 
 	stmt, err := db.Prepare(`INSERT INTO events (meter_id, timestamp, type, description)
 		SELECT ?, ?, ?, ? WHERE NOT EXISTS (
@@ -129,7 +136,36 @@ func LoadEventsCSV(db *DB, path string) (int, error) {
 func colIndex(header []string) map[string]int {
 	idx := make(map[string]int, len(header))
 	for i, name := range header {
-		idx[name] = i
+		idx[strings.TrimSpace(name)] = i
 	}
 	return idx
+}
+
+// ErrMissingColumn is returned when a CSV header is missing a column the
+// loader requires. Without this check a lookup of an absent column would
+// return Go's zero value 0 and silently be read as "column index 0", writing
+// (for example) the meter_id string into consumption_kwh.
+var ErrMissingColumn = errors.New("columna requerida ausente en la cabecera del CSV")
+
+// requiredReadingsColumns / requiredEventsColumns list the header columns each
+// loader indexes unconditionally. Optional columns (readings' "status") are
+// deliberately excluded: they are already looked up with the comma-ok form.
+var (
+	requiredReadingsColumns = []string{"meter_id", "timestamp", "consumption_kwh", "voltage_v", "current_a", "power_factor"}
+	requiredEventsColumns   = []string{"meter_id", "event_timestamp", "event_type", "description"}
+)
+
+// checkRequiredColumns verifies every required column is present in the header
+// before any row is processed, and names all the missing ones at once.
+func checkRequiredColumns(idx map[string]int, required []string, file string) error {
+	var missing []string
+	for _, name := range required {
+		if _, ok := idx[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s: %w: %s", file, ErrMissingColumn, strings.Join(missing, ", "))
+	}
+	return nil
 }

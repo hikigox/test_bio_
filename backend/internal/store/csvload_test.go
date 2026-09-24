@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -110,5 +111,66 @@ func TestLoadEventsCSVMalformedRowReturnsError(t *testing.T) {
 	_, err := LoadEventsCSV(db, csvPath)
 	if err == nil {
 		t.Fatal("expected an error for the malformed row, got nil")
+	}
+}
+
+// TestLoadReadingsCSVMissingColumnReturnsError is the I2 regression test. A
+// lookup of a column absent from the header returned Go's zero value 0 and was
+// silently used as "column index 0", so a missing consumption_kwh column read
+// the meter_id string into that field — data corruption with no error at all.
+func TestLoadReadingsCSVMissingColumnReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	csvPath := filepath.Join(dir, "readings.csv")
+	// consumption_kwh is misspelled: it is absent as far as the loader knows.
+	content := "meter_id,timestamp,consumption,voltage_v,current_a,power_factor,status\n" +
+		"M-101,2026-09-01 00:00:00,23.5,221.9,101.28,0.954,OK\n"
+	if err := os.WriteFile(csvPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, _ := Open(":memory:")
+	defer db.Close()
+	db.Migrate()
+
+	n, err := LoadReadingsCSV(db, csvPath)
+	if err == nil {
+		t.Fatal("expected an error for the missing consumption_kwh column, got nil")
+	}
+	if !errors.Is(err, ErrMissingColumn) {
+		t.Fatalf("expected ErrMissingColumn, got %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("no row may be inserted when the header is invalid, got %d", n)
+	}
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM readings`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("no row may reach the database, got %d", count)
+	}
+}
+
+func TestLoadEventsCSVMissingColumnReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	csvPath := filepath.Join(dir, "events.csv")
+	// event_type is missing entirely.
+	content := "meter_id,event_timestamp,description\n" +
+		"M-104,2026-09-11 00:00,New production line activated\n"
+	if err := os.WriteFile(csvPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, _ := Open(":memory:")
+	defer db.Close()
+	db.Migrate()
+
+	n, err := LoadEventsCSV(db, csvPath)
+	if err == nil {
+		t.Fatal("expected an error for the missing event_type column, got nil")
+	}
+	if !errors.Is(err, ErrMissingColumn) {
+		t.Fatalf("expected ErrMissingColumn, got %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("no row may be inserted when the header is invalid, got %d", n)
 	}
 }
