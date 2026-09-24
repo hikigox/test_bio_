@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"energy-management/internal/engine"
@@ -26,15 +27,30 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("ya hay un análisis en curso (id=%d)", e.RunningID)
 }
 
-// StartAnalysis valida el scope, crea la fila `analyses` y lanza el pipeline
-// en una goroutine. Devuelve el id de inmediato (202 en el handler HTTP, Task 5).
-func StartAnalysis(db *store.DB, scope AnalysisScope, triggeredBy int64) (int64, error) {
-	var runningID sql.NullInt64
-	db.QueryRow(`SELECT id FROM analyses WHERE status = 'RUNNING' LIMIT 1`).Scan(&runningID)
-	if runningID.Valid {
-		return 0, &ConflictError{RunningID: runningID.Int64}
-	}
+// startAnalysisMu guards the "check for a RUNNING analysis, then insert a new
+// RUNNING row" critical section of startAnalysisRow. Without it, two
+// concurrent StartAnalysis calls could both see no RUNNING analysis (via the
+// SELECT) before either commits its INSERT, both proceed, and violate spec
+// 03's "solo un análisis RUNNING a la vez" invariant. store.Open only pins
+// SQLite to a single connection for the ":memory:" DSN used in tests — a
+// file-backed deployment can and does hand out multiple connections/goroutines
+// concurrently, so the race is real there, not just theoretical.
+//
+// A process-local sync.Mutex is enough (rather than a SQLite-level
+// transaction such as BEGIN IMMEDIATE, e.g. via the driver's _txlock DSN
+// param) because this invariant only needs to hold within a single API
+// server process: nothing else writes to the `analyses` table, and this is
+// not a multi-process/distributed deployment. It also keeps the fix local to
+// this file instead of changing store.Open's DSN handling, which is shared
+// by callers outside this task's scope.
+var startAnalysisMu sync.Mutex
 
+// startAnalysisRow performs the atomic "reject if a RUNNING analysis exists,
+// otherwise insert a new RUNNING row" step of StartAnalysis. Extracted so it
+// can be exercised directly under concurrent goroutines in tests, and so the
+// mutex only covers this critical section — not the (slower, unbounded)
+// pipeline that runAnalysis drives afterward.
+func startAnalysisRow(db *store.DB, scope AnalysisScope, triggeredBy int64) (int64, error) {
 	if scope.BaselineFrom != nil && scope.BaselineTo != nil {
 		if scope.BaselineTo.Sub(*scope.BaselineFrom) < 3*24*time.Hour {
 			return 0, &ValidationError{Message: "baseline_from/baseline_to debe cubrir al menos 3 días"}
@@ -42,6 +58,15 @@ func StartAnalysis(db *store.DB, scope AnalysisScope, triggeredBy int64) (int64,
 		if scope.BaselineFrom.Before(scope.From) || scope.BaselineTo.After(scope.To) {
 			return 0, &ValidationError{Message: "baseline_from/baseline_to debe estar dentro de from/to"}
 		}
+	}
+
+	startAnalysisMu.Lock()
+	defer startAnalysisMu.Unlock()
+
+	var runningID sql.NullInt64
+	db.QueryRow(`SELECT id FROM analyses WHERE status = 'RUNNING' LIMIT 1`).Scan(&runningID)
+	if runningID.Valid {
+		return 0, &ConflictError{RunningID: runningID.Int64}
 	}
 
 	meterIDsJSON, _ := json.Marshal(scope.MeterIDs)
@@ -60,6 +85,16 @@ func StartAnalysis(db *store.DB, scope AnalysisScope, triggeredBy int64) (int64,
 		return 0, err
 	}
 	analysisID, _ := res.LastInsertId()
+	return analysisID, nil
+}
+
+// StartAnalysis valida el scope, crea la fila `analyses` y lanza el pipeline
+// en una goroutine. Devuelve el id de inmediato (202 en el handler HTTP, Task 5).
+func StartAnalysis(db *store.DB, scope AnalysisScope, triggeredBy int64) (int64, error) {
+	analysisID, err := startAnalysisRow(db, scope, triggeredBy)
+	if err != nil {
+		return 0, err
+	}
 
 	go runAnalysis(db, analysisID, scope)
 
