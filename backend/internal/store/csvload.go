@@ -2,7 +2,9 @@ package store
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -47,7 +49,10 @@ func LoadReadingsCSV(db *DB, path string) (int, error) {
 	for {
 		row, err := r.Read()
 		if err != nil {
-			break // io.EOF
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return inserted, err
 		}
 		ts, err := parseUTC(row[idx["timestamp"]])
 		if err != nil {
@@ -97,7 +102,10 @@ func LoadEventsCSV(db *DB, path string) (int, error) {
 	for {
 		row, err := r.Read()
 		if err != nil {
-			break
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return inserted, err
 		}
 		ts, err := parseUTC(row[idx["event_timestamp"]])
 		if err != nil {
