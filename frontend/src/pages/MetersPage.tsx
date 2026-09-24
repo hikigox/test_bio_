@@ -6,6 +6,7 @@ import type { MeterListItem } from "../api/types";
 import { formatNumberEsES, formatPercent } from "../lib/format";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
+import ErrorState from "../components/ErrorState";
 
 type StatusFilter = "all" | "normal" | "alert" | "critical";
 type SortField = "consumption" | "variation" | "severity";
@@ -24,10 +25,18 @@ export default function MetersPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortField>("consumption");
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getMeters({ from: range.from, to: range.to }).then((r) => setItems(r.items));
-  }, [range.from, range.to]);
+  function load() {
+    getMeters({ from: range.from, to: range.to })
+      .then((r) => {
+        setItems(r.items);
+        setError(null);
+      })
+      .catch(() => setError("No se pudieron cargar los medidores."));
+  }
+
+  useEffect(load, [range.from, range.to]);
 
   const filtered = useMemo(() => {
     let out = items;
@@ -45,6 +54,8 @@ export default function MetersPage() {
       return (severityRank[b.anomaly?.severity ?? ""] ?? 0) - (severityRank[a.anomaly?.severity ?? ""] ?? 0);
     });
   }, [items, statusFilter, query, sort]);
+
+  if (error && items.length === 0) return <ErrorState message={error} onRetry={load} />;
 
   return (
     <div className="space-y-4">

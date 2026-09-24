@@ -5,6 +5,7 @@ import { getAnomalies } from "../api/anomalies";
 import type { AnomalySummary } from "../api/types";
 import SeverityBadge from "../components/SeverityBadge";
 import EmptyState from "../components/EmptyState";
+import ErrorState from "../components/ErrorState";
 
 type Item = AnomalySummary & { meter_id: string };
 
@@ -15,13 +16,18 @@ export default function AnomaliesPage() {
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
     setLoading(true);
+    setError(null);
     getAnomalies({ from: range.from, to: range.to, type: typeFilter, severity: severityFilter })
       .then((r) => setItems(r.items))
+      .catch(() => setError("No se pudieron cargar las anomalías."))
       .finally(() => setLoading(false));
-  }, [range.from, range.to, typeFilter, severityFilter]);
+  }
+
+  useEffect(load, [range.from, range.to, typeFilter, severityFilter]);
 
   const sorted = useMemo(() => [...items].sort((a, b) => a.priority_rank - b.priority_rank), [items]);
 
@@ -45,6 +51,8 @@ export default function AnomaliesPage() {
 
       {loading ? (
         <div>Cargando…</div>
+      ) : error && sorted.length === 0 ? (
+        <ErrorState message={error} onRetry={load} />
       ) : sorted.length === 0 ? (
         <EmptyState message="Sin anomalías en este rango" />
       ) : (
