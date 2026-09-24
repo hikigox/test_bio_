@@ -142,3 +142,34 @@ type RelatedEvent struct {
 	Relation    EventRelation
 	OffsetHours float64
 }
+
+// AnomalyType es la etiqueta que produce el árbol de clasificación de 02 §5.
+// El valor cero ("") significa "sin anomalía" (rama 5: consumo normal).
+type AnomalyType string
+
+const (
+	RealAnomaly        AnomalyType = "REAL_ANOMALY"
+	ExplainableAnomaly AnomalyType = "EXPLAINABLE_ANOMALY"
+	TypeDataQuality    AnomalyType = "DATA_QUALITY"
+	FalsePositive      AnomalyType = "FALSE_POSITIVE"
+)
+
+// Severity es la severidad de una anomalía (02 §5-6). El valor cero ("")
+// acompaña a AnomalyType "" cuando no hay anomalía.
+type Severity string
+
+const (
+	High   Severity = "HIGH"
+	Medium Severity = "MEDIUM"
+	Low    Severity = "LOW"
+)
+
+// ConfidenceBreakdown desglosa los cuatro términos de la confianza de 02 §7
+// para que la puntuación sea explicable en la evidencia. Los cuatro suman
+// como máximo 1.0 (0.4 + 0.3 + 0.2 + 0.1).
+type ConfidenceBreakdown struct {
+	SignalStrength    float64 // 0–0.4: magnitud de la variación observada
+	ConcordantSignals float64 // 0–0.3: nº de señales y variables coherentes
+	EventPresence     float64 // 0 o 0.2: el cuadro de eventos es concluyente
+	DataQuality       float64 // 0 o 0.1: el medidor no tiene datos defectuosos
+}
