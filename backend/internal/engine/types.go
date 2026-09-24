@@ -59,3 +59,22 @@ func DefaultConfig() Config {
 		DefaultBaselineDays:  7,
 	}
 }
+
+// ThresholdOrigin indica si los umbrales de un medidor se calcularon con su
+// propio ruido histórico (Calculated) o si se usó el ruido de la flota como
+// respaldo por falta de datos suficientes (Fallback).
+type ThresholdOrigin string
+
+const (
+	Calculated ThresholdOrigin = "CALCULATED"
+	Fallback   ThresholdOrigin = "FALLBACK"
+)
+
+// MeterThresholds son los umbrales adaptativos de un medidor (02 §10):
+// umbral = max(piso, k * ruido propio del medidor).
+type MeterThresholds struct {
+	VariationPct  float64
+	OutlierZ      float64
+	ElectricalPct float64
+	Origin        ThresholdOrigin
+}
