@@ -7,7 +7,7 @@ import "testing"
 func TestClassifyDataQualityWhenStableButElectricallyInconsistent(t *testing.T) {
 	signals := []Signal{{Signal: ElectricalInconsistency, Observed: 40, Threshold: 15}}
 	issues := []DataQualityIssue{{Kind: "OUT_OF_RANGE", Count: 20}}
-	typ, sev, _, _, path := Classify(signals, issues, nil, nil, 2.0)
+	typ, sev, _, _, path := Classify(signals, issues, nil, nil, 2.0, 15)
 	if typ != TypeDataQuality {
 		t.Fatalf("expected DATA_QUALITY, got %v (path=%v)", typ, path)
 	}
@@ -19,7 +19,7 @@ func TestClassifyDataQualityWhenStableButElectricallyInconsistent(t *testing.T) 
 func TestClassifyExplainableAnomalyOnLoadIncreaseWithEvent(t *testing.T) {
 	signals := []Signal{{Signal: PersistentShift, Observed: 45, Threshold: 15}}
 	events := []RelatedEvent{{Event: Event{Type: "OPERATIONAL_CHANGE"}, Relation: Explains}}
-	typ, sev, _, _, _ := Classify(signals, nil, events, nil, 45.0)
+	typ, sev, _, _, _ := Classify(signals, nil, events, nil, 45.0, 15)
 	if typ != ExplainableAnomaly || sev != Medium {
 		t.Fatalf("expected EXPLAINABLE_ANOMALY/MEDIUM, got %v/%v", typ, sev)
 	}
@@ -28,7 +28,7 @@ func TestClassifyExplainableAnomalyOnLoadIncreaseWithEvent(t *testing.T) {
 func TestClassifyFalsePositiveOnScheduledOutage(t *testing.T) {
 	signals := []Signal{{Signal: PersistentShift, Observed: -60, Threshold: 15}}
 	events := []RelatedEvent{{Event: Event{Type: "SCHEDULED_OUTAGE"}, Relation: Explains}}
-	typ, sev, _, _, _ := Classify(signals, nil, events, nil, -60.0)
+	typ, sev, _, _, _ := Classify(signals, nil, events, nil, -60.0, 15)
 	if typ != FalsePositive || sev != Low {
 		t.Fatalf("expected FALSE_POSITIVE/LOW, got %v/%v", typ, sev)
 	}
@@ -37,7 +37,7 @@ func TestClassifyFalsePositiveOnScheduledOutage(t *testing.T) {
 func TestClassifyRealAnomalyOnUnexplainedShiftWithElectricalChange(t *testing.T) {
 	signals := []Signal{{Signal: PersistentShift, Observed: 103.7, Threshold: 15}}
 	variables := []VariableDelta{{Variable: "current_a", Changed: true}}
-	typ, sev, confidence, _, _ := Classify(signals, nil, nil, variables, 103.7)
+	typ, sev, confidence, _, _ := Classify(signals, nil, nil, variables, 103.7, 15)
 	if typ != RealAnomaly || sev != High {
 		t.Fatalf("expected REAL_ANOMALY/HIGH, got %v/%v", typ, sev)
 	}
@@ -52,14 +52,14 @@ func TestClassifyRealAnomalyMediumWithoutElectricalChanges(t *testing.T) {
 		{Variable: "voltage_v", Changed: false},
 		{Variable: "current_a", Changed: false},
 	}
-	typ, sev, _, _, path := Classify(signals, nil, nil, variables, 60.0)
+	typ, sev, _, _, path := Classify(signals, nil, nil, variables, 60.0, 15)
 	if typ != RealAnomaly || sev != Medium {
 		t.Fatalf("expected REAL_ANOMALY/MEDIUM, got %v/%v (path=%v)", typ, sev, path)
 	}
 }
 
 func TestClassifyNoSignalsMeansNoAnomaly(t *testing.T) {
-	typ, _, _, _, _ := Classify(nil, nil, nil, nil, 2.0)
+	typ, _, _, _, _ := Classify(nil, nil, nil, nil, 2.0, 15)
 	if typ != "" {
 		t.Fatalf("expected empty type when there are no signals, got %v", typ)
 	}
@@ -77,7 +77,7 @@ func TestClassifyRealAnomalyNotMaskedByDataQualityIssues(t *testing.T) {
 	}
 	issues := []DataQualityIssue{{Kind: "OUT_OF_RANGE", Count: 3}}
 	variables := []VariableDelta{{Variable: "current_a", Changed: true}}
-	typ, sev, _, _, path := Classify(signals, issues, nil, variables, 103.7)
+	typ, sev, _, _, path := Classify(signals, issues, nil, variables, 103.7, 15)
 	if typ != RealAnomaly || sev != High {
 		t.Fatalf("expected REAL_ANOMALY/HIGH despite data issues, got %v/%v (path=%v)", typ, sev, path)
 	}
@@ -86,7 +86,7 @@ func TestClassifyRealAnomalyNotMaskedByDataQualityIssues(t *testing.T) {
 // Inconsistencia eléctrica presente pero débil (no "fuerte") -> Medium, no High.
 func TestClassifyDataQualityMediumWhenInconsistencyIsWeak(t *testing.T) {
 	signals := []Signal{{Signal: ElectricalInconsistency, Observed: 18, Threshold: 15}}
-	typ, sev, _, _, _ := Classify(signals, nil, nil, nil, 1.0)
+	typ, sev, _, _, _ := Classify(signals, nil, nil, nil, 1.0, 15)
 	if typ != TypeDataQuality || sev != Medium {
 		t.Fatalf("expected DATA_QUALITY/MEDIUM for a weak inconsistency, got %v/%v", typ, sev)
 	}
@@ -95,7 +95,7 @@ func TestClassifyDataQualityMediumWhenInconsistencyIsWeak(t *testing.T) {
 // Solo problemas de calidad de datos (sin señales) sigue siendo DATA_QUALITY.
 func TestClassifyDataQualityFromIssuesAloneWithoutSignals(t *testing.T) {
 	issues := []DataQualityIssue{{Kind: "OUT_OF_RANGE", Count: 12}}
-	typ, sev, _, _, _ := Classify(nil, issues, nil, nil, 1.0)
+	typ, sev, _, _, _ := Classify(nil, issues, nil, nil, 1.0, 15)
 	if typ != TypeDataQuality || sev != Medium {
 		t.Fatalf("expected DATA_QUALITY/MEDIUM, got %v/%v", typ, sev)
 	}
@@ -124,14 +124,40 @@ func TestComputeConfidenceBreakdownForStrongUnexplainedShift(t *testing.T) {
 	}
 }
 
-// Eventos solo coincidentes en el tiempo (Related, sin explicar) hacen el cuadro
-// ambiguo: el término de evento no suma.
+// Eventos operativos solo coincidentes en el tiempo (Related, sin explicar)
+// hacen el cuadro ambiguo: el término de evento no suma. Aquí una parada
+// programada coincide con un AUMENTO de consumo, que no explica.
 func TestComputeConfidenceDropsEventTermForMerelyRelatedEvents(t *testing.T) {
 	signals := []Signal{{Signal: PersistentShift, Observed: 30, Threshold: 15}}
-	events := []RelatedEvent{{Event: Event{Type: "UNKNOWN"}, Relation: Related}}
+	events := []RelatedEvent{{Event: Event{Type: "SCHEDULED_OUTAGE"}, Relation: Related}}
 	_, b := computeConfidence(signals, events, nil, nil, 30.0, false)
 	if b.EventPresence != 0 {
 		t.Fatalf("EventPresence: want 0 for merely-related events, got %v", b.EventPresence)
+	}
+}
+
+// Un evento UNKNOWN es el registro explícito de que no hubo operación ("No
+// operational event reported"): el cuadro es tan concluyente como no tener
+// ningún evento, así que el término de evento sí suma. Sin esto, la rama 3 de
+// 02 §5 ("cambio significativo SIN evento") quedaba penalizada precisamente en
+// el caso que describe, y no podía alcanzar la confianza alta que 02 §7 espera.
+func TestComputeConfidenceKeepsEventTermForUnknownNoEventRecord(t *testing.T) {
+	signals := []Signal{{Signal: PersistentShift, Observed: 103.7, Threshold: 15}}
+	events := []RelatedEvent{{
+		Event:    Event{Type: "UNKNOWN", Description: "No operational event reported"},
+		Relation: Related,
+	}}
+	variables := []VariableDelta{{Variable: "current_a", Changed: true}, {Variable: "voltage_v", Changed: true}}
+	total, b := computeConfidence(signals, events, nil, variables, 103.7, false)
+	if b.EventPresence != 0.2 {
+		t.Fatalf("EventPresence: want 0.2 for an explicit no-event record, got %v", b.EventPresence)
+	}
+	noEvents, _ := computeConfidence(signals, nil, nil, variables, 103.7, false)
+	if total != noEvents {
+		t.Fatalf("an explicit no-event record must score like no events at all: %v vs %v", total, noEvents)
+	}
+	if total < 0.9 {
+		t.Fatalf("a +103.7%% unexplained shift must reach confidence >= 0.9, got %v", total)
 	}
 }
 
@@ -158,7 +184,7 @@ func TestComputeConfidenceIsCappedAtOne(t *testing.T) {
 func TestClassifyDataQualityConfidenceUsesSignalRatioNotConsumptionVariation(t *testing.T) {
 	signals := []Signal{{Signal: ElectricalInconsistency, Observed: 40, Threshold: 15}}
 	issues := []DataQualityIssue{{Kind: "OUT_OF_RANGE", Count: 20}}
-	typ, sev, confidence, b, _ := Classify(signals, issues, nil, nil, 2.0)
+	typ, sev, confidence, b, _ := Classify(signals, issues, nil, nil, 2.0, 15)
 	if typ != TypeDataQuality || sev != High {
 		t.Fatalf("fixture must stay DATA_QUALITY/HIGH, got %v/%v", typ, sev)
 	}
@@ -176,13 +202,13 @@ func TestClassifyDataQualityConfidenceUsesSignalRatioNotConsumptionVariation(t *
 // La fuerza escala con la razón: justo en el umbral vale la mitad del peso.
 func TestClassifyDataQualityConfidenceScalesWithThresholdRatio(t *testing.T) {
 	atThreshold := []Signal{{Signal: ElectricalInconsistency, Observed: 15, Threshold: 15}}
-	_, _, _, b, _ := Classify(atThreshold, nil, nil, nil, 1.0)
+	_, _, _, b, _ := Classify(atThreshold, nil, nil, nil, 1.0, 15)
 	if b.SignalStrength != 0.2 {
 		t.Fatalf("SignalStrength at exactly 1x threshold: want 0.2, got %v", b.SignalStrength)
 	}
 
 	weak := []Signal{{Signal: ElectricalInconsistency, Observed: 18, Threshold: 15}}
-	_, _, _, wb, _ := Classify(weak, nil, nil, nil, 1.0)
+	_, _, _, wb, _ := Classify(weak, nil, nil, nil, 1.0, 15)
 	if wb.SignalStrength <= b.SignalStrength {
 		t.Fatalf("a larger ratio must score stronger: %v vs %v", wb.SignalStrength, b.SignalStrength)
 	}

@@ -21,6 +21,42 @@ func TestBuildReasonNoChangedVariablesUsesFallbackPhrase(t *testing.T) {
 	}
 }
 
+// I6: las ramas 3/4 de 02 §5 no restringen el signo, así que una caída
+// inexplicada es un REAL_ANOMALY válido. La plantilla decía siempre "por encima
+// del baseline", produciendo textos que se contradicen ("-0.1% por encima").
+func TestBuildReasonRealAnomalyNegativeVariationSaysBelow(t *testing.T) {
+	reason := BuildReason(RealAnomaly, -42.5, nil)
+	if !contains(reason, "por debajo") {
+		t.Fatalf("a negative variation must read as \"por debajo\", got %q", reason)
+	}
+	if contains(reason, "por encima") {
+		t.Fatalf("a negative variation must not read as \"por encima\", got %q", reason)
+	}
+	if !contains(reason, "42.5") {
+		t.Fatalf("the magnitude must be printed, got %q", reason)
+	}
+	if contains(reason, "-42.5") {
+		t.Fatalf("the sign is carried by the wording, not by the number, got %q", reason)
+	}
+}
+
+// La misma coherencia de signo en las otras tres plantillas.
+func TestBuildReasonAllTemplatesAreSignAware(t *testing.T) {
+	for _, typ := range []AnomalyType{RealAnomaly, TypeDataQuality, ExplainableAnomaly, FalsePositive} {
+		down := BuildReason(typ, -30, nil)
+		if !contains(down, "por debajo") || contains(down, "por encima") {
+			t.Errorf("%v: negative variation must read as \"por debajo\", got %q", typ, down)
+		}
+		if contains(down, "-30") {
+			t.Errorf("%v: must print the magnitude, not the signed number, got %q", typ, down)
+		}
+		up := BuildReason(typ, 30, nil)
+		if !contains(up, "por encima") || contains(up, "por debajo") {
+			t.Errorf("%v: positive variation must read as \"por encima\", got %q", typ, up)
+		}
+	}
+}
+
 func TestBuildReasonUnknownTypeReturnsEmpty(t *testing.T) {
 	if got := BuildReason(AnomalyType(""), 10, nil); got != "" {
 		t.Fatalf("expected empty reason for zero-value type, got %q", got)
