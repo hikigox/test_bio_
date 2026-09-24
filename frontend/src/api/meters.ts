@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { MeterDetail, MeterListItem } from "./types";
+import type { AnomalySummaryLite, MeterDetail, MeterListItem } from "./types";
 
 export function getMeters(params: { from?: string; to?: string; status?: string; q?: string; sort?: string; order?: string } = {}) {
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]);
@@ -19,4 +19,8 @@ export function getMeterReadings(meterId: string, from: string, to: string) {
 
 export function getMeterEvents(meterId: string) {
   return apiFetch<{ items: { timestamp: string; type: string; description: string }[] }>(`/api/meters/${meterId}/events`);
+}
+
+export function getMeterAnomalies(meterId: string, scope: "current" | "history" = "current") {
+  return apiFetch<{ items: AnomalySummaryLite[] }>(`/api/meters/${meterId}/anomalies?scope=${scope}`);
 }

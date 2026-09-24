@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceArea, CartesianGrid } from "recharts";
 import { useDateRange } from "../context/DateRangeContext";
-import { getMeter, getMeterReadings, getMeterEvents } from "../api/meters";
-import type { MeterDetail } from "../api/types";
+import { getMeter, getMeterAnomalies, getMeterReadings, getMeterEvents } from "../api/meters";
+import type { AnomalySummaryLite, MeterDetail } from "../api/types";
 import { formatNumberEsES, formatPercent } from "../lib/format";
 import StatusBadge from "../components/StatusBadge";
+import SeverityBadge from "../components/SeverityBadge";
 import RunAnalysisButton from "../components/RunAnalysisButton";
 
 interface ReadingPoint {
@@ -28,6 +29,8 @@ export default function MeterDetailPage() {
   const [meter, setMeter] = useState<MeterDetail | null>(null);
   const [readings, setReadings] = useState<ReadingPoint[]>([]);
   const [events, setEvents] = useState<MeterEvent[]>([]);
+  const [anomalyScope, setAnomalyScope] = useState<"current" | "history">("current");
+  const [anomalies, setAnomalies] = useState<AnomalySummaryLite[]>([]);
 
   function load() {
     if (!meterId) return;
@@ -37,6 +40,11 @@ export default function MeterDetailPage() {
   }
 
   useEffect(load, [meterId, range.from, range.to]);
+
+  useEffect(() => {
+    if (!meterId) return;
+    getMeterAnomalies(meterId, anomalyScope).then((r) => setAnomalies(r.items));
+  }, [meterId, anomalyScope]);
 
   if (!meter) return <div>Cargando…</div>;
 
@@ -78,6 +86,40 @@ export default function MeterDetailPage() {
         <ElectricalChart title="Voltaje (V)" readings={readings} dataKey="voltage_v" color="#059669" anomaly={anomaly} />
         <ElectricalChart title="Corriente (A)" readings={readings} dataKey="current_a" color="#d97706" anomaly={anomaly} />
         <ElectricalChart title="Factor de potencia" readings={readings} dataKey="power_factor" color="#7c3aed" anomaly={anomaly} />
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-4">
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="font-medium text-slate-900">Anomalías</h3>
+          <div className="flex gap-2 text-xs">
+            <button
+              className={`px-2 py-1 rounded ${anomalyScope === "current" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}
+              onClick={() => setAnomalyScope("current")}
+            >
+              Vigente
+            </button>
+            <button
+              className={`px-2 py-1 rounded ${anomalyScope === "history" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}
+              onClick={() => setAnomalyScope("history")}
+            >
+              Histórico
+            </button>
+          </div>
+        </div>
+        {anomalies.length === 0 && <p className="text-sm text-slate-400">Sin anomalías</p>}
+        <ul className="text-sm divide-y">
+          {anomalies.map((a) => (
+            <li key={a.id} className="py-2 flex justify-between items-center">
+              <Link to={`/anomalies/${a.id}`} className="text-blue-600 hover:underline">
+                {a.type}
+              </Link>
+              <div className="flex gap-2 items-center">
+                <span className="text-slate-500">{a.status}</span>
+                <SeverityBadge severity={a.severity} />
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-4">

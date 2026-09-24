@@ -32,6 +32,19 @@ export interface MeterBaselineDetail {
   change_point_at: string | null;
 }
 
+// AnomalySummaryLite is the item shape of GET /meters/:meterId/anomalies
+// (backend/internal/api/meters.go:441-447): a plain {id, type, severity,
+// confidence, status} row, distinct from AnomalySummary (which carries
+// priority_rank/in_range/active_from/active_to — fields this endpoint
+// doesn't return).
+export interface AnomalySummaryLite {
+  id: number;
+  type: AnomalySummary["type"];
+  severity: AnomalySummary["severity"];
+  confidence: number;
+  status: "OPEN" | "INVESTIGATING" | "RESOLVED" | "DISMISSED";
+}
+
 export interface AnomalySummary {
   id: number;
   type: "REAL_ANOMALY" | "EXPLAINABLE_ANOMALY" | "DATA_QUALITY" | "FALSE_POSITIVE";

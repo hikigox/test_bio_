@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { DateRangeProvider } from "../context/DateRangeContext";
 import MeterDetailPage from "./MeterDetailPage";
@@ -54,6 +54,7 @@ describe("MeterDetailPage", () => {
     });
     vi.spyOn(metersApi, "getMeterReadings").mockResolvedValue(readings);
     vi.spyOn(metersApi, "getMeterEvents").mockResolvedValue({ items: [] });
+    vi.spyOn(metersApi, "getMeterAnomalies").mockResolvedValue({ items: [] });
 
     renderPage();
 
@@ -73,6 +74,7 @@ describe("MeterDetailPage", () => {
     vi.spyOn(metersApi, "getMeterEvents").mockResolvedValue({
       items: [{ timestamp: "2026-09-03T00:00:00Z", type: "MAINTENANCE", description: "Revisión programada" }],
     });
+    vi.spyOn(metersApi, "getMeterAnomalies").mockResolvedValue({ items: [] });
 
     renderPage();
 
@@ -84,6 +86,7 @@ describe("MeterDetailPage", () => {
     vi.spyOn(metersApi, "getMeter").mockResolvedValue({ ...baseMeter, anomaly: null, latest_anomaly: null });
     vi.spyOn(metersApi, "getMeterReadings").mockResolvedValue(readings);
     vi.spyOn(metersApi, "getMeterEvents").mockResolvedValue({ items: [] });
+    vi.spyOn(metersApi, "getMeterAnomalies").mockResolvedValue({ items: [] });
     const postAnalyze = vi.spyOn(analysisApi, "postAnalyze").mockResolvedValue({ id: 99 } as any);
     vi.spyOn(analysisApi, "getAnalysis").mockResolvedValue({
       id: 99, status: "PENDING", stage: "READINGS", progress: 0,
@@ -97,5 +100,33 @@ describe("MeterDetailPage", () => {
     button.click();
 
     await waitFor(() => expect(postAnalyze).toHaveBeenCalledWith({ meter_ids: ["M-109"] }));
+  });
+
+  it("lists the meter's current anomalies and switches to history on toggle", async () => {
+    vi.spyOn(metersApi, "getMeter").mockResolvedValue({ ...baseMeter, anomaly: null, latest_anomaly: null });
+    vi.spyOn(metersApi, "getMeterReadings").mockResolvedValue(readings);
+    vi.spyOn(metersApi, "getMeterEvents").mockResolvedValue({ items: [] });
+    const getMeterAnomalies = vi.spyOn(metersApi, "getMeterAnomalies").mockImplementation((_meterId, scope = "current") =>
+      Promise.resolve({
+        items:
+          scope === "current"
+            ? [{ id: 12, type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, status: "OPEN" }]
+            : [
+                { id: 12, type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, status: "OPEN" },
+                { id: 5, type: "EXPLAINABLE_ANOMALY", severity: "LOW", confidence: 0.7, status: "RESOLVED" },
+              ],
+      })
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(getMeterAnomalies).toHaveBeenCalledWith("M-109", "current"));
+    await waitFor(() => expect(screen.getByText("REAL_ANOMALY")).toBeInTheDocument());
+    expect(screen.queryByText("EXPLAINABLE_ANOMALY")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /histórico/i }));
+
+    await waitFor(() => expect(getMeterAnomalies).toHaveBeenCalledWith("M-109", "history"));
+    await waitFor(() => expect(screen.getByText("EXPLAINABLE_ANOMALY")).toBeInTheDocument());
   });
 });
