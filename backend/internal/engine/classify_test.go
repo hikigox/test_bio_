@@ -106,7 +106,7 @@ func TestClassifyDataQualityFromIssuesAloneWithoutSignals(t *testing.T) {
 func TestComputeConfidenceBreakdownForStrongUnexplainedShift(t *testing.T) {
 	signals := []Signal{{Signal: PersistentShift, Observed: 103.7, Threshold: 15}}
 	variables := []VariableDelta{{Variable: "current_a", Changed: true}}
-	total, b := computeConfidence(signals, nil, nil, variables, 103.7)
+	total, b := computeConfidence(signals, nil, nil, variables, 103.7, false)
 	if b.SignalStrength != 0.4 {
 		t.Fatalf("SignalStrength: want 0.4, got %v", b.SignalStrength)
 	}
@@ -129,7 +129,7 @@ func TestComputeConfidenceBreakdownForStrongUnexplainedShift(t *testing.T) {
 func TestComputeConfidenceDropsEventTermForMerelyRelatedEvents(t *testing.T) {
 	signals := []Signal{{Signal: PersistentShift, Observed: 30, Threshold: 15}}
 	events := []RelatedEvent{{Event: Event{Type: "UNKNOWN"}, Relation: Related}}
-	_, b := computeConfidence(signals, events, nil, nil, 30.0)
+	_, b := computeConfidence(signals, events, nil, nil, 30.0, false)
 	if b.EventPresence != 0 {
 		t.Fatalf("EventPresence: want 0 for merely-related events, got %v", b.EventPresence)
 	}
@@ -142,9 +142,52 @@ func TestComputeConfidenceIsCappedAtOne(t *testing.T) {
 	}
 	events := []RelatedEvent{{Event: Event{Type: "OPERATIONAL_CHANGE"}, Relation: Explains}}
 	variables := []VariableDelta{{Changed: true}, {Changed: true}, {Changed: true}}
-	total, _ := computeConfidence(signals, events, nil, variables, 5000)
+	total, _ := computeConfidence(signals, events, nil, variables, 5000, false)
 	if total != 1.0 {
 		t.Fatalf("confidence must saturate at 1.0, got %v", total)
+	}
+}
+
+// En la rama DATA_QUALITY el consumo es estable por construcción, así que
+// variationPct ~0 no puede ser la base de la fuerza de la señal: se usa la
+// razón observado/umbral de la señal que disparó (02 §7, "variación/z").
+// Fixture insignia: EI obs=40 thr=15 -> razón 2.67, por encima del factor
+// "fuerte" (2) -> fuerza saturada 0.4. Total = 0.4 + 0.1 (1 señal) + 0.2
+// (sin eventos) + 0.0 (hay issues) = 0.70, por encima del corte de 0.6 que
+// 02 §7 usa para la etiqueta "Baja".
+func TestClassifyDataQualityConfidenceUsesSignalRatioNotConsumptionVariation(t *testing.T) {
+	signals := []Signal{{Signal: ElectricalInconsistency, Observed: 40, Threshold: 15}}
+	issues := []DataQualityIssue{{Kind: "OUT_OF_RANGE", Count: 20}}
+	typ, sev, confidence, b, _ := Classify(signals, issues, nil, nil, 2.0)
+	if typ != TypeDataQuality || sev != High {
+		t.Fatalf("fixture must stay DATA_QUALITY/HIGH, got %v/%v", typ, sev)
+	}
+	if b.SignalStrength != 0.4 {
+		t.Fatalf("SignalStrength: want 0.4 for a 2.67x-threshold inconsistency, got %v", b.SignalStrength)
+	}
+	if confidence != 0.7 {
+		t.Fatalf("confidence: want 0.7, got %v", confidence)
+	}
+	if confidence < 0.6 {
+		t.Fatalf("a strong, clearly-firing signal must not read as low confidence: %v", confidence)
+	}
+}
+
+// La fuerza escala con la razón: justo en el umbral vale la mitad del peso.
+func TestClassifyDataQualityConfidenceScalesWithThresholdRatio(t *testing.T) {
+	atThreshold := []Signal{{Signal: ElectricalInconsistency, Observed: 15, Threshold: 15}}
+	_, _, _, b, _ := Classify(atThreshold, nil, nil, nil, 1.0)
+	if b.SignalStrength != 0.2 {
+		t.Fatalf("SignalStrength at exactly 1x threshold: want 0.2, got %v", b.SignalStrength)
+	}
+
+	weak := []Signal{{Signal: ElectricalInconsistency, Observed: 18, Threshold: 15}}
+	_, _, _, wb, _ := Classify(weak, nil, nil, nil, 1.0)
+	if wb.SignalStrength <= b.SignalStrength {
+		t.Fatalf("a larger ratio must score stronger: %v vs %v", wb.SignalStrength, b.SignalStrength)
+	}
+	if wb.SignalStrength >= 0.4 {
+		t.Fatalf("a 1.2x ratio must not saturate: %v", wb.SignalStrength)
 	}
 }
 

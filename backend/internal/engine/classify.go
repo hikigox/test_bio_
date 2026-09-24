@@ -30,7 +30,6 @@ func Classify(signals []Signal, issues []DataQualityIssue, events []RelatedEvent
 		return "", "", 0, ConfidenceBreakdown{}, []string{"no_signals"}
 	}
 
-	confidence, breakdown := computeConfidence(signals, events, issues, variables, variationPct)
 	path := []string{}
 
 	// "Cambio significativo" = alguno de los detectores de consumo disparó
@@ -43,10 +42,16 @@ func Classify(signals []Signal, issues []DataQualityIssue, events []RelatedEvent
 	//    cambió, un problema de datos no debe enmascarar la anomalía de consumo
 	//    (sigue reportándose en la evidencia y baja la confianza).
 	if !consumptionChanged && (has(ElectricalInconsistency) || has(DataQuality) || len(issues) > 0) {
+		// En esta rama el consumo es estable por construcción, así que la
+		// fuerza de la señal se mide sobre la propia señal que disparó y no
+		// sobre variationPct (que aquí es ~0). Ver computeConfidence.
+		confidence, breakdown := computeConfidence(signals, events, issues, variables, variationPct, true)
 		path = append(path, "consumption_stable", "data_quality_issue")
 		return TypeDataQuality, dataQualitySeverity(signals), confidence, breakdown, path
 	}
 	path = append(path, "consumption_changed")
+
+	confidence, breakdown := computeConfidence(signals, events, issues, variables, variationPct, false)
 
 	// 2. Cambio significativo + evento que lo explica. MatchEvents (02 §4) ya
 	//    comprobó que la dirección del cambio case con el tipo de evento, así
@@ -110,10 +115,36 @@ func countChangedVariables(variables []VariableDelta) int {
 	return n
 }
 
+// dataQualityStrengthFraction mide la fuerza de una anomalía de calidad de
+// datos con la razón |Observed|/Threshold de la señal que disparó, en lugar de
+// con la variación de consumo (que en esa rama es ~0 por construcción). Es la
+// alternativa "/z" que nombra 02 §7 para señales que no se miden en porcentaje
+// de consumo. Se normaliza con el mismo criterio de "fuerte" que usa la
+// severidad (strongInconsistencyFactor): justo en el umbral vale 0.5, al doble
+// del umbral o más satura en 1.
+func dataQualityStrengthFraction(signals []Signal) float64 {
+	best := 0.0
+	for _, s := range signals {
+		if s.Signal != ElectricalInconsistency && s.Signal != DataQuality {
+			continue
+		}
+		if s.Threshold <= 0 {
+			continue
+		}
+		if ratio := abs(s.Observed) / s.Threshold; ratio > best {
+			best = ratio
+		}
+	}
+	return minFloat(best/strongInconsistencyFactor, 1)
+}
+
 // computeConfidence combina los cuatro términos de 02 §7 y redondea a 2
 // decimales. El máximo es 1.0 (0.4 + 0.3 + 0.2 + 0.1):
 //
-//   - fuerza de la señal (0.4): |variación| saturada en 100%.
+//   - fuerza de la señal (0.4): |variación| saturada en 100%, o, cuando se está
+//     puntuando la rama DATA_QUALITY (dataQualityCase), la razón
+//     observado/umbral de la señal que disparó — 02 §7 admite ambas bases
+//     ("variación/z") y la de consumo no aplica a un consumo estable.
 //   - señales concordantes (0.3): nº de señales más nº de variables eléctricas
 //     que cambiaron de forma coherente, saturado en 3 piezas de evidencia.
 //   - evento (0.2): el cuadro de eventos es concluyente, o porque un evento
@@ -121,8 +152,12 @@ func countChangedVariables(variables []VariableDelta) int {
 //     cuando solo hay eventos meramente coincidentes en el tiempo (Related),
 //     que dejan el diagnóstico ambiguo.
 //   - calidad de datos (0.1): el medidor no arrastra lecturas defectuosas.
-func computeConfidence(signals []Signal, events []RelatedEvent, issues []DataQualityIssue, variables []VariableDelta, variationPct float64) (float64, ConfidenceBreakdown) {
-	strength := minFloat(abs(variationPct)/100, 1) * 0.4
+func computeConfidence(signals []Signal, events []RelatedEvent, issues []DataQualityIssue, variables []VariableDelta, variationPct float64, dataQualityCase bool) (float64, ConfidenceBreakdown) {
+	strengthFraction := minFloat(abs(variationPct)/100, 1)
+	if dataQualityCase {
+		strengthFraction = dataQualityStrengthFraction(signals)
+	}
+	strength := strengthFraction * 0.4
 
 	concordant := minFloat(float64(len(signals)+countChangedVariables(variables))/3, 1) * 0.3
 
