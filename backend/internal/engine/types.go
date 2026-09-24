@@ -78,3 +78,31 @@ type MeterThresholds struct {
 	ElectricalPct float64
 	Origin        ThresholdOrigin
 }
+
+// SignalType identifica cuál de los 5 detectores de 02 §2-3 disparó una señal.
+type SignalType string
+
+const (
+	PersistentShift         SignalType = "PERSISTENT_SHIFT"
+	Outlier                 SignalType = "OUTLIER"
+	HourlyPattern           SignalType = "HOURLY_PATTERN"
+	DataQuality             SignalType = "DATA_QUALITY"
+	ElectricalInconsistency SignalType = "ELECTRICAL_INCONSISTENCY"
+)
+
+// Signal es una señal disparada por un detector, con el valor observado y el
+// umbral que se comparó, para alimentar evidence.signals (03-api.md).
+type Signal struct {
+	Signal    SignalType
+	Observed  float64
+	Threshold float64
+	Detail    string
+}
+
+// DataQualityIssue describe un problema de calidad de datos encontrado
+// (independiente de si generó señal DATA_QUALITY), para alimentar
+// evidence.data_quality_issues.
+type DataQualityIssue struct {
+	Kind  string
+	Count int
+}
