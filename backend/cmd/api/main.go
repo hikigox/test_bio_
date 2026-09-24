@@ -21,7 +21,7 @@ func getenv(key, fallback string) string {
 
 func main() {
 	dbPath := getenv("DB_PATH", "./energy.db")
-	dataDir := getenv("DATA_DIR", "./data")
+	dataDir := getenv("DATA_DIR", "../data")
 	port := getenv("PORT", "8080")
 	jwtSecret := getenv("JWT_SECRET", "change-me")
 	demoEmail := getenv("DEMO_EMAIL", "demo@energy.local")
