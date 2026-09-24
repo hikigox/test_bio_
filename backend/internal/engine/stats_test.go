@@ -37,6 +37,17 @@ func TestRobustZHandlesZeroMADWithoutNaN(t *testing.T) {
 	}
 }
 
+func TestRobustZZeroMADSymmetricForNegativeMedian(t *testing.T) {
+	positive := RobustZ(50, []float64{10, 10, 10, 10})
+	negative := RobustZ(-50, []float64{-10, -10, -10, -10})
+	if !almostEqual(positive, -negative, 1e-9) {
+		t.Fatalf("expected RobustZ to be antisymmetric under negation: positive=%v, negative=%v", positive, negative)
+	}
+	if negative != negative { // NaN check
+		t.Fatal("RobustZ produced NaN for negative-median constant sample")
+	}
+}
+
 func TestRobustZTypicalCase(t *testing.T) {
 	sample := []float64{10, 11, 9, 10, 12, 8, 10, 11, 9, 10}
 	z := RobustZ(10, sample)

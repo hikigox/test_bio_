@@ -3,7 +3,10 @@
 // classification. It has no database or network dependencies.
 package engine
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 // Median calcula la mediana. No modifica el slice de entrada.
 func Median(values []float64) float64 {
@@ -50,7 +53,7 @@ func RobustZ(value float64, sample []float64) float64 {
 			return 0
 		}
 		// piso: 1% del valor absoluto de la mediana, o 1e-6 si la mediana también es 0.
-		floor := m * 0.01
+		floor := math.Abs(m) * 0.01
 		if floor <= 0 {
 			floor = 1e-6
 		}
