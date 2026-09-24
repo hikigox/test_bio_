@@ -16,6 +16,12 @@ func NewRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
 	r.NotFound(notFoundJSON)
+	// Sin esto chi responde 405 con cuerpo vacío y sin Content-Type, lo que
+	// rompe el contrato de errores de spec 03 ({"error":"mensaje"} para TODOS
+	// los errores).
+	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "método no permitido")
+	})
 
 	r.Get("/healthz", func(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

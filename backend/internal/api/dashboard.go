@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"energy-management/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -19,6 +20,19 @@ type dashboardByMeterItem struct {
 type lastAnalysisSummary struct {
 	At     string `json:"at"`
 	Status string `json:"status"`
+}
+
+// consumptionForRange suma consumption_kwh de las lecturas del medidor en
+// [from, to]. Extremo superior inclusivo, como el resto de los rangos de
+// consulta del API (/meters/:id/readings, /meters/:id/events): el rango por
+// defecto del dashboard es exactamente [MIN(timestamp), MAX(timestamp)], así
+// que un `<` exclusivo se comería la última lectura de cada medidor.
+func consumptionForRange(db *store.DB, meterID string, from, to time.Time) float64 {
+	var total sql.NullFloat64
+	db.QueryRow(`SELECT SUM(consumption_kwh) FROM readings
+		WHERE meter_id = ? AND timestamp >= ? AND timestamp <= ?`,
+		meterID, from.Format(time.RFC3339), to.Format(time.RFC3339)).Scan(&total)
+	return total.Float64
 }
 
 func registerDashboardRoutes(r chi.Router, s *Server) {
@@ -63,7 +77,14 @@ func registerDashboardRoutes(r chi.Router, s *Server) {
 		confCount := 0
 
 		for _, mr := range meterRows {
-			_, actualKWh, _ := BaselineForRange(s.DB, mr.meterID, from, to)
+			// Consumo del rango leído directamente de `readings`, NO vía
+			// BaselineForRange: esa función está (correctamente) supeditada a
+			// que exista un análisis vigente, y el consumo es un hecho de las
+			// lecturas crudas, no un artefacto del análisis. Enrutarlo por ahí
+			// dejaba el dashboard en 0 kWh para toda la flota antes del primer
+			// análisis — justo la primera pantalla de la demo (spec 05:
+			// "Dashboard (12 medidores, 'Sin análisis')").
+			actualKWh := consumptionForRange(s.DB, mr.meterID, from, to)
 			item := dashboardByMeterItem{MeterID: mr.meterID, ConsumptionKWh: actualKWh, Status: mr.status}
 			total += actualKWh
 
