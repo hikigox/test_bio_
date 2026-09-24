@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"energy-management/internal/auth"
 )
@@ -47,6 +48,62 @@ func TestLoginWrongPasswordReturns401(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestLoginNonexistentEmailReturns401(t *testing.T) {
+	srv := newTestServer(t)
+	router := NewRouter(srv)
+
+	body := bytes.NewBufferString(`{"email":"nobody@energy.local","password":"whatever"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", body)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for nonexistent email, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLoginTimingSideChannelIsMitigated proves the fix for the timing
+// side-channel: login must run a bcrypt compare on BOTH the "email not
+// found" and "email found, wrong password" paths, so an attacker cannot
+// distinguish the two by response time. Rather than asserting a fragile
+// exact-timing bound, this test asserts that both paths take a comparable,
+// non-trivial amount of time (each within an order of magnitude of the
+// other, and both well above what a bare DB lookup alone would cost),
+// which only holds if bcrypt.CompareHashAndPassword actually runs on both.
+// Before the fix, "email not found" short-circuited before ever calling
+// auth.VerifyPassword and was orders of magnitude faster.
+func TestLoginTimingSideChannelIsMitigated(t *testing.T) {
+	srv := newTestServer(t)
+	seedDemoUser(t, srv, "demo@energy.local", "demo1234")
+	router := NewRouter(srv)
+
+	measure := func(email string) time.Duration {
+		body := bytes.NewBufferString(`{"email":"` + email + `","password":"wrong-password"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", body)
+		rec := httptest.NewRecorder()
+		start := time.Now()
+		router.ServeHTTP(rec, req)
+		elapsed := time.Since(start)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 for %q, got %d", email, rec.Code)
+		}
+		return elapsed
+	}
+
+	missingEmailDuration := measure("nobody@energy.local")
+	wrongPasswordDuration := measure("demo@energy.local")
+
+	// bcrypt at DefaultCost dominates request time (tens of ms); a
+	// short-circuited lookup-miss would be sub-millisecond by comparison.
+	// Require both paths to be within the same order of magnitude of each
+	// other so the test fails if the short-circuit regresses.
+	ratio := float64(missingEmailDuration) / float64(wrongPasswordDuration)
+	if ratio < 0.2 || ratio > 5 {
+		t.Fatalf("timing side-channel suspected: missing-email=%v wrong-password=%v ratio=%.3f (want within 0.2x-5x of each other)",
+			missingEmailDuration, wrongPasswordDuration, ratio)
 	}
 }
 

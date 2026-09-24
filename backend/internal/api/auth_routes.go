@@ -19,6 +19,14 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// dummyBcryptHash is a precomputed valid bcrypt hash of an arbitrary fixed
+// string. It is never a real user's password hash. It exists purely for
+// timing safety: when the login lookup fails to find a user, we still run a
+// bcrypt compare against this hash so the response takes roughly the same
+// time as the "user found, wrong password" path, preventing an attacker
+// from enumerating valid emails via response-time measurement.
+const dummyBcryptHash = "$2a$10$T2Aq7Ufamudqtnz9YVHytuI.RV.bZc1Pj8xo8Xcfe9luxX72w///S"
+
 func registerAuthRoutes(r chi.Router, s *Server) {
 	r.Post("/auth/login", func(w http.ResponseWriter, req *http.Request) {
 		var body loginRequest
@@ -29,7 +37,13 @@ func registerAuthRoutes(r chi.Router, s *Server) {
 		var userID int64
 		var hash string
 		err := s.DB.QueryRow(`SELECT id, password_hash FROM users WHERE email = ?`, body.Email).Scan(&userID, &hash)
-		if err != nil || !auth.VerifyPassword(hash, body.Password) {
+		if err != nil {
+			hash = dummyBcryptHash
+		}
+		// Always run the bcrypt compare, even on a lookup miss, so both
+		// paths pay the same cost (see dummyBcryptHash above).
+		validPassword := auth.VerifyPassword(hash, body.Password)
+		if err != nil || !validPassword {
 			writeError(w, http.StatusUnauthorized, "credenciales inválidas")
 			return
 		}
