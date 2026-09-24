@@ -12,13 +12,15 @@ export default function AnomaliesPage() {
   const { range } = useDateRange();
   const navigate = useNavigate();
   const [items, setItems] = useState<Item[]>([]);
+  const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
 
   useEffect(() => {
-    getAnomalies({ from: range.from, to: range.to, type: typeFilter, severity: severityFilter }).then((r) =>
-      setItems(r.items)
-    );
+    setLoading(true);
+    getAnomalies({ from: range.from, to: range.to, type: typeFilter, severity: severityFilter })
+      .then((r) => setItems(r.items))
+      .finally(() => setLoading(false));
   }, [range.from, range.to, typeFilter, severityFilter]);
 
   const sorted = useMemo(() => [...items].sort((a, b) => a.priority_rank - b.priority_rank), [items]);
@@ -41,7 +43,9 @@ export default function AnomaliesPage() {
         </select>
       </div>
 
-      {sorted.length === 0 ? (
+      {loading ? (
+        <div>Cargando…</div>
+      ) : sorted.length === 0 ? (
         <EmptyState message="Sin anomalías en este rango" />
       ) : (
         <table className="w-full bg-white rounded-lg shadow-sm text-sm">
