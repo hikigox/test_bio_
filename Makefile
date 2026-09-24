@@ -13,7 +13,7 @@ logs:
 	docker compose logs -f
 
 test:
-	docker run --rm -v $(PWD)/backend:/src -w /src golang:1.23-alpine go test ./...
+	docker run --rm -v $(PWD)/backend:/src -w /src golang:1.26-alpine go test ./...
 
 # make eval EXPECTED=/ruta/expected_results.csv
 eval:
