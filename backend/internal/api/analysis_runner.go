@@ -196,7 +196,6 @@ func queryEventsForMeter(db *store.DB, meterID string) []engine.Event {
 	return out
 }
 
-// persistResults y finishAnalysis: implementación completa en Task 5.
 func persistResults(db *store.DB, analysisID int64, results []engine.MeterResult) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -242,9 +241,108 @@ func finishAnalysis(db *store.DB, analysisID int64, results []engine.MeterResult
 		anomalyCount, highPriority, avgConfidence, summary, analysisID)
 }
 
-// insertMeterBaseline e insertAnomaly: implementación completa en Task 5.
-// Aquí son stubs mínimos (return nil) solo para que el paquete compile y
-// runAnalysis pueda llegar a COMPLETED en este Task; Task 5 los reemplaza con
-// la persistencia real en meter_baselines/anomalies.
-func insertMeterBaseline(tx *sql.Tx, analysisID int64, r engine.MeterResult) error { return nil }
-func insertAnomaly(tx *sql.Tx, analysisID int64, r engine.MeterResult) error       { return nil }
+func insertMeterBaseline(tx *sql.Tx, analysisID int64, r engine.MeterResult) error {
+	profileJSON, _ := json.Marshal(r.Baseline.MedianByHour)
+	var changePointAt interface{}
+	if r.ChangePoint.Found {
+		changePointAt = r.ChangePoint.At.Format(time.RFC3339)
+	}
+	_, err := tx.Exec(`INSERT INTO meter_baselines
+		(analysis_id, meter_id, method, window_from, window_to, change_point_at,
+		 baseline_kwh, actual_kwh, variation_pct, hourly_profile_json,
+		 baseline_voltage_v, baseline_current_a, baseline_power_factor,
+		 readings_count, data_quality_score)
+		VALUES (?, ?, 'HOURLY_MEDIAN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		analysisID, r.MeterID, r.Baseline.WindowFrom.Format(time.RFC3339), r.Baseline.WindowTo.Format(time.RFC3339),
+		changePointAt, r.BaselineKWh, r.ActualKWh, r.VariationPct, string(profileJSON),
+		r.Baseline.VoltageV, r.Baseline.CurrentA, r.Baseline.PowerFactor,
+		len(r.Signals), dataQualityScore(r))
+	return err
+}
+
+func dataQualityScore(r engine.MeterResult) float64 {
+	if len(r.Evidence.DataQualityIssues) == 0 {
+		return 1
+	}
+	return 0.5
+}
+
+var statusByAnomaly = map[string]string{
+	"REAL_ANOMALY:HIGH":          "CRITICAL",
+	"REAL_ANOMALY:MEDIUM":        "ALERT",
+	"REAL_ANOMALY:LOW":           "ALERT",
+	"EXPLAINABLE_ANOMALY:HIGH":   "ALERT",
+	"EXPLAINABLE_ANOMALY:MEDIUM": "ALERT",
+	"EXPLAINABLE_ANOMALY:LOW":    "ALERT",
+	"DATA_QUALITY:HIGH":          "ALERT",
+	"DATA_QUALITY:MEDIUM":        "ALERT",
+	"DATA_QUALITY:LOW":           "ALERT",
+	"FALSE_POSITIVE:HIGH":        "OK",
+	"FALSE_POSITIVE:MEDIUM":      "OK",
+	"FALSE_POSITIVE:LOW":         "OK",
+}
+
+func insertAnomaly(tx *sql.Tx, analysisID int64, r engine.MeterResult) error {
+	evidenceJSON, _ := json.Marshal(map[string]interface{}{
+		"decision_path":        r.Evidence.DecisionPath,
+		"confidence_breakdown": r.Evidence.ConfidenceBreakdown,
+		"data_quality_issues":  r.Evidence.DataQualityIssues,
+		"affected_readings": map[string]interface{}{
+			"count": r.Evidence.AffectedReadingsCount,
+			"first": r.Evidence.AffectedReadingsFirst.Format(time.RFC3339),
+			"last":  r.Evidence.AffectedReadingsLast.Format(time.RFC3339),
+		},
+	})
+	confidenceLabel := "LOW"
+	if r.Confidence > 0.85 {
+		confidenceLabel = "HIGH"
+	} else if r.Confidence >= 0.6 {
+		confidenceLabel = "MEDIUM"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	var changePointAt interface{}
+	if r.ChangePoint.Found {
+		changePointAt = r.ChangePoint.At.Format(time.RFC3339)
+	}
+
+	anomalyRes, err := tx.Exec(`INSERT INTO anomalies
+		(analysis_id, meter_id, detected_at, period_from, period_to, change_point_at,
+		 type, severity, confidence, confidence_label, priority_score,
+		 baseline_kwh, actual_kwh, variation_pct, reason, recommended_action,
+		 explanation_source, status, created_at, updated_at, evidence_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TEMPLATE', 'OPEN', ?, ?, ?)`,
+		analysisID, r.MeterID, now, r.Baseline.WindowFrom.Format(time.RFC3339), r.Baseline.WindowTo.Format(time.RFC3339),
+		changePointAt, string(r.Type), string(r.Severity), r.Confidence, confidenceLabel, r.PriorityScore,
+		r.BaselineKWh, r.ActualKWh, r.VariationPct, r.Reason, r.RecommendedAction, now, now, string(evidenceJSON))
+	if err != nil {
+		return err
+	}
+	anomalyID, _ := anomalyRes.LastInsertId()
+
+	for _, s := range r.Signals {
+		if _, err := tx.Exec(`INSERT INTO anomaly_signals (anomaly_id, signal, observed, threshold, detail)
+			VALUES (?, ?, ?, ?, ?)`, anomalyID, string(s.Signal), s.Observed, s.Threshold, s.Detail); err != nil {
+			return err
+		}
+	}
+	for _, v := range r.Variables {
+		changed := 0
+		if v.Changed {
+			changed = 1
+		}
+		if _, err := tx.Exec(`INSERT INTO anomaly_variables (anomaly_id, variable, baseline, actual, delta_pct, changed)
+			VALUES (?, ?, ?, ?, ?, ?)`, anomalyID, v.Variable, v.Baseline, v.Actual, v.DeltaPct, changed); err != nil {
+			return err
+		}
+	}
+
+	statusKey := string(r.Type) + ":" + string(r.Severity)
+	meterStatus := statusByAnomaly[statusKey]
+	if meterStatus == "" {
+		meterStatus = "OK"
+	}
+	if _, err := tx.Exec(`UPDATE meters SET status = ? WHERE meter_id = ?`, meterStatus, r.MeterID); err != nil {
+		return err
+	}
+	return nil
+}

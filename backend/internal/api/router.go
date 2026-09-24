@@ -39,5 +39,4 @@ func NewRouter(s *Server) http.Handler {
 // Stub functions for later tasks
 func registerMeterRoutes(r chi.Router, s *Server)     {}
 func registerAnomalyRoutes(r chi.Router, s *Server)   {}
-func registerAnalysisRoutes(r chi.Router, s *Server)  {}
 func registerDashboardRoutes(r chi.Router, s *Server) {}
