@@ -108,9 +108,27 @@ func nullableTime(t *time.Time) interface{} {
 	return t.Format(time.RFC3339)
 }
 
+// meterRun empareja el resultado del motor con el período REALMENTE analizado
+// para ese medidor y cuántas lecturas se procesaron.
+//
+// El período analizado es distinto de `r.Baseline.WindowFrom/WindowTo`: esa es
+// la ventana de REFERENCIA del motor (que termina en el punto de cambio cuando
+// lo hay, ver engine/types.go). Persistir la ventana de referencia como
+// `anomalies.period_from/period_to` colapsaba la ventana activa derivada por
+// spec 03 (`active_from = change_point_at ?? period_from`, `active_to =
+// period_to`) a duración cero y hacía que el filtro de solapamiento
+// `?from=&to=` descartara anomalías todavía vigentes.
+type meterRun struct {
+	Result        engine.MeterResult
+	PeriodFrom    time.Time
+	PeriodTo      time.Time
+	ReadingsCount int
+}
+
 // runAnalysis corre el pipeline por medidor y persiste baselines/anomalías en
 // una transacción (spec 01: "un análisis escribe... en una transacción").
 func runAnalysis(db *store.DB, analysisID int64, scope AnalysisScope) {
+	startedAt := time.Now()
 	setStage(db, analysisID, "BASELINE", 0.1)
 
 	meterIDs := scope.MeterIDs
@@ -127,7 +145,7 @@ func runAnalysis(db *store.DB, analysisID int64, scope AnalysisScope) {
 	}
 
 	fleetCV := 0.15 // respaldo de flota; el cálculo fino queda documentado en 02 §10 (motor)
-	var results []engine.MeterResult
+	var runs []meterRun
 
 	setStage(db, analysisID, "DETECTION", 0.3)
 	for _, meterID := range meterIDs {
@@ -137,7 +155,16 @@ func runAnalysis(db *store.DB, analysisID int64, scope AnalysisScope) {
 		}
 		events := queryEventsForMeter(db, meterID)
 		result := engine.Run(meterID, readings, events, fleetCV, engine.DefaultConfig())
-		results = append(results, result)
+		// El período analizado es el que abarcan las lecturas que realmente
+		// se le pasaron al motor (el scope recortado a los datos existentes),
+		// no el scope pedido: si el medidor no tiene datos hasta la mitad del
+		// rango, decir que se analizó desde scope.From sería falso.
+		runs = append(runs, meterRun{
+			Result:        result,
+			PeriodFrom:    readings[0].Timestamp,
+			PeriodTo:      readings[len(readings)-1].Timestamp,
+			ReadingsCount: len(readings),
+		})
 	}
 
 	setStage(db, analysisID, "CORRELATION", 0.5)
@@ -145,13 +172,13 @@ func runAnalysis(db *store.DB, analysisID int64, scope AnalysisScope) {
 	setStage(db, analysisID, "EXPLANATION", 0.8)
 	setStage(db, analysisID, "RECOMMENDATION", 0.9)
 
-	if err := persistResults(db, analysisID, results); err != nil {
+	if err := persistResults(db, analysisID, runs); err != nil {
 		db.Exec(`UPDATE analyses SET status='FAILED', error=?, finished_at=? WHERE id=?`,
 			err.Error(), time.Now().UTC().Format(time.RFC3339), analysisID)
 		return
 	}
 
-	finishAnalysis(db, analysisID, results)
+	finishAnalysis(db, analysisID, runs, startedAt)
 }
 
 func setStage(db *store.DB, analysisID int64, stage string, progress float64) {
@@ -196,18 +223,23 @@ func queryEventsForMeter(db *store.DB, meterID string) []engine.Event {
 	return out
 }
 
-func persistResults(db *store.DB, analysisID int64, results []engine.MeterResult) error {
+// persistResults escribe, en una sola transacción, la fila de baseline de cada
+// medidor analizado y — solo si el motor detectó algo — su fila de anomalía.
+// El orden importa: insertMeterBaseline deja el medidor en OK (analizado y
+// normal, spec 03) e insertAnomaly, que corre después para el mismo medidor,
+// sobrescribe ese status con el que corresponda a la anomalía.
+func persistResults(db *store.DB, analysisID int64, runs []meterRun) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	for _, r := range results {
-		if err := insertMeterBaseline(tx, analysisID, r); err != nil {
+	for _, run := range runs {
+		if err := insertMeterBaseline(tx, analysisID, run.Result); err != nil {
 			tx.Rollback()
 			return err
 		}
-		if r.HasAnomaly {
-			if err := insertAnomaly(tx, analysisID, r); err != nil {
+		if run.Result.HasAnomaly {
+			if err := insertAnomaly(tx, analysisID, run); err != nil {
 				tx.Rollback()
 				return err
 			}
@@ -216,10 +248,13 @@ func persistResults(db *store.DB, analysisID int64, results []engine.MeterResult
 	return tx.Commit()
 }
 
-func finishAnalysis(db *store.DB, analysisID int64, results []engine.MeterResult) {
+func finishAnalysis(db *store.DB, analysisID int64, runs []meterRun, startedAt time.Time) {
 	anomalyCount, highPriority := 0, 0
 	var confSum float64
-	for _, r := range results {
+	readingsAnalyzed := 0
+	for _, run := range runs {
+		r := run.Result
+		readingsAnalyzed += run.ReadingsCount
 		if r.HasAnomaly {
 			anomalyCount++
 			confSum += r.Confidence
@@ -237,10 +272,18 @@ func finishAnalysis(db *store.DB, analysisID int64, results []engine.MeterResult
 		finished_at=?, duration_ms=?, readings_analyzed=?, meters_analyzed=?,
 		anomalies_count=?, high_priority_count=?, avg_confidence=?, summary_message=?
 		WHERE id=?`,
-		time.Now().UTC().Format(time.RFC3339), 0, 0, len(results),
+		time.Now().UTC().Format(time.RFC3339), time.Since(startedAt).Milliseconds(),
+		readingsAnalyzed, len(runs),
 		anomalyCount, highPriority, avgConfidence, summary, analysisID)
 }
 
+// insertMeterBaseline escribe la fila de meter_baselines del medidor y lo deja
+// en status OK. Corre para TODO medidor analizado (con o sin anomalía), así que
+// es el único punto donde un medidor analizado y normal puede salir de UNKNOWN:
+// spec 03 reserva UNKNOWN para "Nunca analizado" y exige OK para "FALSE_POSITIVE,
+// o sin anomalía". Cuando sí hay anomalía, insertAnomaly corre después (mismo
+// medidor, misma transacción, ver persistResults) y sobrescribe este OK con el
+// status que manda statusByAnomaly.
 func insertMeterBaseline(tx *sql.Tx, analysisID int64, r engine.MeterResult) error {
 	profileJSON, _ := json.Marshal(r.Baseline.MedianByHour)
 	var changePointAt interface{}
@@ -257,6 +300,10 @@ func insertMeterBaseline(tx *sql.Tx, analysisID int64, r engine.MeterResult) err
 		changePointAt, r.BaselineKWh, r.ActualKWh, r.VariationPct, string(profileJSON),
 		r.Baseline.VoltageV, r.Baseline.CurrentA, r.Baseline.PowerFactor,
 		len(r.Signals), dataQualityScore(r))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE meters SET status = 'OK' WHERE meter_id = ?`, r.MeterID)
 	return err
 }
 
@@ -282,7 +329,8 @@ var statusByAnomaly = map[string]string{
 	"FALSE_POSITIVE:LOW":         "OK",
 }
 
-func insertAnomaly(tx *sql.Tx, analysisID int64, r engine.MeterResult) error {
+func insertAnomaly(tx *sql.Tx, analysisID int64, run meterRun) error {
+	r := run.Result
 	evidenceJSON, _ := json.Marshal(map[string]interface{}{
 		"decision_path":        r.Evidence.DecisionPath,
 		"confidence_breakdown": r.Evidence.ConfidenceBreakdown,
@@ -311,7 +359,13 @@ func insertAnomaly(tx *sql.Tx, analysisID int64, r engine.MeterResult) error {
 		 baseline_kwh, actual_kwh, variation_pct, reason, recommended_action,
 		 explanation_source, status, created_at, updated_at, evidence_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TEMPLATE', 'OPEN', ?, ?, ?)`,
-		analysisID, r.MeterID, now, r.Baseline.WindowFrom.Format(time.RFC3339), r.Baseline.WindowTo.Format(time.RFC3339),
+		// period_from/period_to = período ANALIZADO (no la ventana de
+		// referencia del baseline, que es otro concepto y sigue guardándose
+		// en meter_baselines.window_from/window_to). De aquí sale la ventana
+		// activa de spec 03, que debe terminar al final del período analizado
+		// para que una anomalía en curso siga apareciendo en el filtro
+		// `?from=&to=` y tenga duration_hours > 0.
+		analysisID, r.MeterID, now, run.PeriodFrom.Format(time.RFC3339), run.PeriodTo.Format(time.RFC3339),
 		changePointAt, string(r.Type), string(r.Severity), r.Confidence, confidenceLabel, r.PriorityScore,
 		r.BaselineKWh, r.ActualKWh, r.VariationPct, r.Reason, r.RecommendedAction, now, now, string(evidenceJSON))
 	if err != nil {

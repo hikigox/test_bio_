@@ -28,7 +28,12 @@ func TestPersistResultsWritesBaselineForEveryMeterAndAnomalyOnlyWhenPresent(t *t
 		Evidence: engine.Evidence{DecisionPath: []string{"no_data_quality_issue", "significant_change", "no_event"}},
 	}
 
-	err := persistResults(db, 1, []engine.MeterResult{stable, withAnomaly})
+	analyzedFrom := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	analyzedTo := time.Date(2026, 9, 14, 23, 0, 0, 0, time.UTC)
+	err := persistResults(db, 1, []meterRun{
+		{Result: stable, PeriodFrom: analyzedFrom, PeriodTo: analyzedTo, ReadingsCount: 336},
+		{Result: withAnomaly, PeriodFrom: analyzedFrom, PeriodTo: analyzedTo, ReadingsCount: 336},
+	})
 	if err != nil {
 		t.Fatalf("persist: %v", err)
 	}
@@ -67,7 +72,7 @@ func TestPersistResultsWritesMeterStatusFromAnomaly(t *testing.T) {
 		MeterID: "M-109", HasAnomaly: true, Type: engine.RealAnomaly, Severity: engine.High,
 		Baseline: engine.HourlyProfile{},
 	}
-	persistResults(db, 1, []engine.MeterResult{result})
+	persistResults(db, 1, []meterRun{{Result: result}})
 
 	var status string
 	db.QueryRow(`SELECT status FROM meters WHERE meter_id = 'M-109'`).Scan(&status)
@@ -94,7 +99,7 @@ func TestPersistResultsRollsBackOnPartialFailure(t *testing.T) {
 	first := engine.MeterResult{MeterID: "M-101", Baseline: engine.HourlyProfile{}}
 	colliding := engine.MeterResult{MeterID: "M-202", Baseline: engine.HourlyProfile{}}
 
-	err := persistResults(db, 1, []engine.MeterResult{first, colliding})
+	err := persistResults(db, 1, []meterRun{{Result: first}, {Result: colliding}})
 	if err == nil {
 		t.Fatal("expected error from UNIQUE constraint violation on second insert")
 	}
