@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceArea, CartesianGrid } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceArea, ReferenceLine, CartesianGrid } from "recharts";
 import { useDateRange } from "../context/DateRangeContext";
 import { getMeter, getMeterAnomalies, getMeterReadings, getMeterEvents } from "../api/meters";
 import type { AnomalySummaryLite, MeterDetail } from "../api/types";
@@ -8,6 +8,7 @@ import { formatNumberEsES, formatPercent } from "../lib/format";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
 import RunAnalysisButton from "../components/RunAnalysisButton";
+import ErrorState from "../components/ErrorState";
 
 interface ReadingPoint {
   timestamp: string;
@@ -15,6 +16,7 @@ interface ReadingPoint {
   voltage_v: number;
   current_a: number;
   power_factor: number;
+  baseline_kwh?: number;
 }
 
 interface MeterEvent {
@@ -31,12 +33,17 @@ export default function MeterDetailPage() {
   const [events, setEvents] = useState<MeterEvent[]>([]);
   const [anomalyScope, setAnomalyScope] = useState<"current" | "history">("current");
   const [anomalies, setAnomalies] = useState<AnomalySummaryLite[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   function load() {
     if (!meterId) return;
-    getMeter(meterId, range.from, range.to).then(setMeter);
-    getMeterReadings(meterId, range.from, range.to).then((r) => setReadings(r.items));
-    getMeterEvents(meterId).then((r) => setEvents(r.items));
+    Promise.all([
+      getMeter(meterId, range.from, range.to).then(setMeter),
+      getMeterReadings(meterId, range.from, range.to).then((r) => setReadings(r.items)),
+      getMeterEvents(meterId).then((r) => setEvents(r.items)),
+    ])
+      .then(() => setError(null))
+      .catch(() => setError("No se pudo cargar el medidor."));
   }
 
   useEffect(load, [meterId, range.from, range.to]);
@@ -46,6 +53,7 @@ export default function MeterDetailPage() {
     getMeterAnomalies(meterId, anomalyScope).then((r) => setAnomalies(r.items));
   }, [meterId, anomalyScope]);
 
+  if (error && !meter) return <ErrorState message={error} onRetry={load} />;
   if (!meter) return <div>Cargando…</div>;
 
   // La banda de anomalía usa `anomaly` (la vigente dentro del rango
@@ -53,6 +61,16 @@ export default function MeterDetailPage() {
   // por rango): si el rango elegido no la incluye, `anomaly` viene null y no
   // debe pintarse ninguna banda aunque exista una anomalía histórica.
   const anomaly = meter.anomaly;
+
+  // hourly_profile is 24 avg-kWh-by-hour-of-day values; map each reading's
+  // UTC hour to that baseline value so it can be overlaid as a second line
+  // on the same timestamp axis as the readings.
+  const readingsWithBaseline: ReadingPoint[] = meter.baseline
+    ? readings.map((r) => ({
+        ...r,
+        baseline_kwh: meter.baseline!.hourly_profile[new Date(r.timestamp).getUTCHours()],
+      }))
+    : readings;
 
   return (
     <div className="space-y-6">
@@ -70,7 +88,7 @@ export default function MeterDetailPage() {
 
       <div className="bg-white rounded-lg shadow-sm p-4">
         <h3 className="font-medium text-slate-900 mb-2">Consumo vs. baseline</h3>
-        <LineChart width={700} height={280} data={readings}>
+        <LineChart width={700} height={280} data={readingsWithBaseline}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="timestamp" tickFormatter={(t) => t.slice(5, 10)} />
           <YAxis />
@@ -78,7 +96,16 @@ export default function MeterDetailPage() {
           {anomaly && (
             <ReferenceArea x1={anomaly.active_from} x2={anomaly.active_to} fill="#fca5a5" fillOpacity={0.2} />
           )}
+          {events.map((e, i) => (
+            <ReferenceLine key={i} x={e.timestamp} stroke="#cbd5e1" strokeDasharray="2 2" />
+          ))}
+          {meter.baseline?.change_point_at && (
+            <ReferenceLine x={meter.baseline.change_point_at} stroke="#f59e0b" label="Cambio" />
+          )}
           <Line type="monotone" dataKey="consumption_kwh" stroke="#2563eb" dot={false} name="Consumo (kWh)" />
+          {meter.baseline && (
+            <Line type="monotone" dataKey="baseline_kwh" stroke="#94a3b8" strokeDasharray="4 4" dot={false} name="Baseline (kWh)" />
+          )}
         </LineChart>
       </div>
 
