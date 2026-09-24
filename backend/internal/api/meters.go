@@ -3,7 +3,10 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"math"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"energy-management/internal/store"
@@ -65,13 +68,16 @@ type meterDetail struct {
 	LatestAnomaly      *anomalySummary `json:"latest_anomaly"`
 }
 
-// meterAnalysisFields fills the analysis-derived fields of item: baseline_ref
-// and analysis_id are set for any meter that has ever been analyzed (spec
-// 03), independent of whether it currently has an anomaly; consumption/
-// baseline/variation, analysis_period and the anomaly summary are only set
-// when the meter's vigente analysis (Task 3's currentAnalysisID) produced an
-// anomaly. A never-analyzed meter leaves every pointer field nil, which
-// json.Marshal renders as `null` — no panic on the nil-anomaly path.
+// meterAnalysisFields fills the analysis-derived fields of item. Every meter
+// that has ever been analyzed (Task 3's currentAnalysisID found a vigente
+// analysis) gets analysis_id, baseline_ref, consumption/baseline/variation and
+// analysis_period — whether or not that analysis produced an anomaly, since a
+// `meter_baselines` row exists either way. Spec 03 line 82 only allows those
+// fields to be null for a meter that was NEVER analyzed (where analysis_id is
+// null too); returning them as null next to a non-null analysis_id would be
+// self-contradictory. The anomaly summary is set only when the vigente
+// analysis produced an anomaly. A never-analyzed meter leaves every pointer
+// field nil, which json.Marshal renders as `null`.
 //
 // Returns the resolved analysisID/found/anomaly so callers building the
 // GET /meters/:meterId detail response (baseline block, current V/I/PF,
@@ -88,28 +94,50 @@ func meterAnalysisFields(s *Server, meterID string, item *meterListItem, ranks m
 	}
 
 	anomaly, err = CurrentAnomaly(s.DB, meterID)
-	if err != nil || anomaly == nil {
-		return analysisID, true, nil
+	if err != nil {
+		anomaly = nil
 	}
 
 	var baselineKWh, actualKWh, variationPct float64
+	var figuresOK bool
 	if !hasRange {
 		// No caller-supplied date filter: report the analysis's own stored
 		// figures for its full period, rather than recomputing from
 		// readings (which would silently zero out if the raw readings for
-		// that period are no longer retained).
-		baselineKWh, actualKWh, variationPct = anomaly.BaselineKWh, anomaly.ActualKWh, anomaly.VariationPct
-	} else {
-		baselineKWh, actualKWh, err = BaselineForRange(s.DB, meterID, from, to)
-		if err != nil {
-			return analysisID, true, anomaly
+		// that period are no longer retained). The anomaly row carries them
+		// when there is one; otherwise they come from the meter_baselines
+		// row that insertMeterBaseline writes for every analyzed meter.
+		if anomaly != nil {
+			baselineKWh, actualKWh, variationPct = anomaly.BaselineKWh, anomaly.ActualKWh, anomaly.VariationPct
+			figuresOK = true
+		} else if b, a, v, err := fetchBaselineFigures(s.DB, analysisID, meterID); err == nil {
+			baselineKWh, actualKWh, variationPct = b, a, v
+			figuresOK = true
 		}
+	} else if b, a, err := BaselineForRange(s.DB, meterID, from, to); err == nil {
+		baselineKWh, actualKWh = b, a
 		if baselineKWh != 0 {
 			variationPct = (actualKWh - baselineKWh) / baselineKWh * 100
 		}
+		figuresOK = true
 	}
-	item.ConsumptionKWh, item.BaselineKWh, item.VariationPct = &actualKWh, &baselineKWh, &variationPct
-	item.AnalysisPeriod = &periodRange{From: anomaly.PeriodFrom.Format(time.RFC3339), To: anomaly.PeriodTo.Format(time.RFC3339)}
+	if figuresOK {
+		item.ConsumptionKWh, item.BaselineKWh, item.VariationPct = &actualKWh, &baselineKWh, &variationPct
+	}
+
+	// analysis_period is the period the analysis covered. With C2's fix the
+	// anomaly's own period_from/period_to is exactly that period; for an
+	// analyzed-but-normal meter there is no anomaly row, so it comes from the
+	// analyses row's data_from/data_to.
+	if anomaly != nil {
+		item.AnalysisPeriod = &periodRange{From: anomaly.PeriodFrom.Format(time.RFC3339), To: anomaly.PeriodTo.Format(time.RFC3339)}
+	} else if dataFrom, dataTo, err := fetchAnalysisDataPeriod(s.DB, analysisID); err == nil {
+		item.AnalysisPeriod = &periodRange{From: dataFrom.Format(time.RFC3339), To: dataTo.Format(time.RFC3339)}
+	}
+
+	if anomaly == nil {
+		return analysisID, true, nil
+	}
 
 	activeFrom, activeTo := ActiveWindow(*anomaly)
 	inRange := true
@@ -134,6 +162,19 @@ func fetchBaselineRef(db *store.DB, analysisID int64, meterID string) (*baseline
 		return nil, err
 	}
 	return &baselineRefSummary{WindowFrom: windowFrom.String, WindowTo: windowTo.String, Method: method.String}, nil
+}
+
+// fetchBaselineFigures reads the analysis's own stored baseline/actual/
+// variation figures for a meter from meter_baselines. Used for a meter that
+// was analyzed but found normal (no anomalies row to read them from).
+func fetchBaselineFigures(db *store.DB, analysisID int64, meterID string) (baselineKWh, actualKWh, variationPct float64, err error) {
+	var b, a, v sql.NullFloat64
+	err = db.QueryRow(`SELECT baseline_kwh, actual_kwh, variation_pct FROM meter_baselines
+		WHERE analysis_id = ? AND meter_id = ?`, analysisID, meterID).Scan(&b, &a, &v)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return b.Float64, a.Float64, v.Float64, nil
 }
 
 // fetchBaselineDetail reads the full baseline block for GET /meters/:meterId
@@ -235,11 +276,17 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 			return
 		}
 
-		items := []meterListItem{}
+		rowsOut := []meterListRow{}
 		for _, mr := range meterRows {
 			item := meterListItem{MeterID: mr.meterID, Name: mr.name.String, Status: mr.status}
-			meterAnalysisFields(s, mr.meterID, &item, ranks, from, to, hasRange)
-			items = append(items, item)
+			_, _, anomaly := meterAnalysisFields(s, mr.meterID, &item, ranks, from, to, hasRange)
+			rowsOut = append(rowsOut, meterListRow{item: item, anomaly: anomaly})
+		}
+		rowsOut = filterMeterRows(rowsOut, req.URL.Query().Get("status"), req.URL.Query().Get("q"))
+		sortMeterRows(rowsOut, req.URL.Query().Get("sort"), req.URL.Query().Get("order"))
+		items := make([]meterListItem, 0, len(rowsOut))
+		for _, r := range rowsOut {
+			items = append(items, r.item)
 		}
 		// Top-level period echoes the caller's ?from=&to= verbatim. There is
 		// no single well-defined "period" for a fleet-wide list when no
@@ -359,15 +406,33 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 		meterID := chi.URLParam(req, "meterId")
 		scope := req.URL.Query().Get("scope")
 		from, to, hasRange := parseRangeParams(req)
+		// scope=current (el valor por defecto) = la anomalía del análisis
+		// VIGENTE, es decir el último COMPLETED que INCLUYÓ al medidor
+		// (currentAnalysisID, spec 03 línea 38) — no el último que le generó
+		// una fila en anomalies. Si el análisis vigente no le encontró nada,
+		// la respuesta es vacía: no se cae hacia una anomalía más antigua,
+		// que es justamente el dato obsoleto que la regla de vigencia
+		// descarta (mismo criterio que CurrentAnomaly/priorityRanks/
+		// GET /anomalies).
 		query := `SELECT a.id, a.type, a.severity, a.confidence, a.status, a.period_from, a.period_to, a.change_point_at
 			FROM anomalies a
 			JOIN analyses an ON an.id = a.analysis_id WHERE a.meter_id = ? AND an.status = 'COMPLETED'`
+		args := []interface{}{meterID}
 		if scope != "history" {
-			query += ` ORDER BY an.finished_at DESC LIMIT 1`
-		} else {
-			query += ` ORDER BY an.finished_at DESC`
+			analysisID, found, err := currentAnalysisID(s.DB, meterID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "error leyendo anomalías")
+				return
+			}
+			if !found {
+				writeJSON(w, http.StatusOK, map[string]interface{}{"items": []interface{}{}})
+				return
+			}
+			query += ` AND a.analysis_id = ?`
+			args = append(args, analysisID)
 		}
-		rows, err := s.DB.Query(query, meterID)
+		query += ` ORDER BY an.finished_at DESC`
+		rows, err := s.DB.Query(query, args...)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "error leyendo anomalías")
 			return
@@ -406,6 +471,102 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": out})
 	})
+}
+
+// meterListRow carries a response item plus the vigente anomaly row it came
+// from. The anomaly isn't part of the JSON shape, but sort=severity needs its
+// priority_score for the tie-break (spec 03 line 69), which the response's
+// anomaly summary doesn't expose.
+type meterListRow struct {
+	item    meterListItem
+	anomaly *AnomalyRow
+}
+
+// meterStatusFilter maps spec 03 line 70's filter vocabulary
+// ("normal = OK, alert = ALERT, critical = CRITICAL") onto meters.status.
+var meterStatusFilter = map[string]string{"normal": "OK", "alert": "ALERT", "critical": "CRITICAL"}
+
+// filterMeterRows applies ?status= and ?q=.
+//
+//   - status: all|normal|alert|critical (spec 03). "all", empty, or any
+//     unrecognized value means no filter — a nonsense value returning the
+//     whole fleet is friendlier for a demo UI than a 400, and spec 03 doesn't
+//     ask for validation here.
+//   - q: case-insensitive substring match on meter_id. Spec 03 doesn't define
+//     the search field; meter_id is what the Meters screen shows and filters
+//     on, so it's the minimal plausible reading. Judgment call.
+func filterMeterRows(rows []meterListRow, status, q string) []meterListRow {
+	wantStatus := meterStatusFilter[strings.ToLower(status)]
+	needle := strings.ToLower(strings.TrimSpace(q))
+	if wantStatus == "" && needle == "" {
+		return rows
+	}
+	out := make([]meterListRow, 0, len(rows))
+	for _, r := range rows {
+		if wantStatus != "" && r.item.Status != wantStatus {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(r.item.MeterID), needle) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+var severityRank = map[string]int{"LOW": 1, "MEDIUM": 2, "HIGH": 3}
+
+// sortMeterRows applies ?sort= and ?order= (spec 03 line 22/69).
+//
+//   - sort: consumption|variation|severity. Anything else (including empty)
+//     leaves the natural meter_id order untouched.
+//   - order: asc|desc, defaulting to desc. Spec 03 lists the param but not its
+//     values; desc is the only default that satisfies line 69's documented
+//     severity ordering ("HIGH > MEDIUM > LOW > sin anomalía; desempate por
+//     priority_score") and matches the dashboard's highest-consumption-first
+//     convention. Judgment call.
+//
+// A never-analyzed meter has no consumption/variation figure; it sorts as the
+// lowest possible value, so it lands last under the default desc order.
+func sortMeterRows(rows []meterListRow, sortBy, order string) {
+	var key func(meterListRow) (float64, float64)
+	switch strings.ToLower(sortBy) {
+	case "consumption":
+		key = func(r meterListRow) (float64, float64) { return nullableFloat(r.item.ConsumptionKWh), 0 }
+	case "variation":
+		key = func(r meterListRow) (float64, float64) { return nullableFloat(r.item.VariationPct), 0 }
+	case "severity":
+		key = func(r meterListRow) (float64, float64) {
+			if r.anomaly == nil {
+				return 0, 0
+			}
+			return float64(severityRank[r.anomaly.Severity]), r.anomaly.PriorityScore
+		}
+	default:
+		return
+	}
+	asc := strings.EqualFold(order, "asc")
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := i, j
+		if !asc {
+			a, b = j, i
+		}
+		ka, ta := key(rows[a])
+		kb, tb := key(rows[b])
+		if ka != kb {
+			return ka < kb
+		}
+		return ta < tb
+	})
+}
+
+// nullableFloat maps a missing (never-analyzed) figure to -Inf so it always
+// sorts below any real value, in either direction.
+func nullableFloat(v *float64) float64 {
+	if v == nil {
+		return math.Inf(-1)
+	}
+	return *v
 }
 
 func parseRangeParams(req *http.Request) (from, to time.Time, hasRange bool) {
