@@ -15,7 +15,9 @@ const strongInconsistencyFactor = 2.0
 //
 // Devuelve AnomalyType "" (y Severity "") cuando no hay ninguna evidencia:
 // rama 5, consumo normal.
-func Classify(signals []Signal, issues []DataQualityIssue, events []RelatedEvent, variables []VariableDelta, variationPct float64) (AnomalyType, Severity, float64, ConfidenceBreakdown, []string) {
+// variationThresholdPct es T_var,i, el umbral adaptativo de "variación
+// significativa" del propio medidor (MeterThresholds.VariationPct).
+func Classify(signals []Signal, issues []DataQualityIssue, events []RelatedEvent, variables []VariableDelta, variationPct, variationThresholdPct float64) (AnomalyType, Severity, float64, ConfidenceBreakdown, []string) {
 	has := func(t SignalType) bool {
 		for _, s := range signals {
 			if s.Signal == t {
@@ -32,10 +34,14 @@ func Classify(signals []Signal, issues []DataQualityIssue, events []RelatedEvent
 
 	path := []string{}
 
-	// "Cambio significativo" = alguno de los detectores de consumo disparó
-	// (02 §2.3-2.5). Las otras dos señales (DATA_QUALITY, ELECTRICAL_INCONSISTENCY)
-	// no hablan del nivel de consumo.
-	consumptionChanged := has(PersistentShift) || has(Outlier) || has(HourlyPattern)
+	// "Cambio significativo" es exactamente lo que define 02 §10:
+	// variation_pct > T_var,i. NO basta con que haya disparado alguna señal de
+	// consumo: un único OUTLIER horario (o un HOURLY_PATTERN) describe horas
+	// sueltas fuera del perfil, no un cambio de nivel — un medidor con una hora
+	// anómala y variación ~0 % no debe enrutarse a las ramas 2-4 como
+	// REAL_ANOMALY. Esas señales siguen en Signals/evidencia para auditoría,
+	// pero no deciden esta bifurcación.
+	consumptionChanged := abs(variationPct) > variationThresholdPct
 
 	// 1. Consumo estable pero eléctricas inconsistentes o datos defectuosos.
 	//    La condición "consumo estable" es parte de la rama: si el consumo sí
@@ -48,6 +54,12 @@ func Classify(signals []Signal, issues []DataQualityIssue, events []RelatedEvent
 		confidence, breakdown := computeConfidence(signals, events, issues, variables, variationPct, true)
 		path = append(path, "consumption_stable", "data_quality_issue")
 		return TypeDataQuality, dataQualitySeverity(signals), confidence, breakdown, path
+	}
+	if !consumptionChanged {
+		// Consumo estable y sin problemas de datos: rama 5. Puede haber señales
+		// (outliers horarios aislados) que quedan registradas en la evidencia,
+		// pero ninguna rama del árbol de 02 §5 aplica, así que no hay anomalía.
+		return "", "", 0, ConfidenceBreakdown{}, []string{"consumption_stable", "no_data_quality_issue"}
 	}
 	path = append(path, "consumption_changed")
 
@@ -103,6 +115,21 @@ func dataQualitySeverity(signals []Signal) Severity {
 		}
 	}
 	return Medium
+}
+
+// hasInformativeEvent indica si en la ventana ±24 h hay algún evento que
+// realmente aporte información operativa. Un evento de tipo UNKNOWN es el
+// registro explícito de que NO se reportó ninguna operación ("No operational
+// event reported"): deja el cuadro de eventos tan concluyente como la ausencia
+// total de eventos, no ambiguo. Contarlo como evento ambiguo penalizaba la
+// confianza justo en el caso que 02 §5 rama 3 describe como "sin evento".
+func hasInformativeEvent(events []RelatedEvent) bool {
+	for _, e := range events {
+		if e.Event.Type != "UNKNOWN" && e.Event.Type != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func countChangedVariables(variables []VariableDelta) int {
@@ -183,7 +210,7 @@ func computeConfidence(signals []Signal, events []RelatedEvent, issues []DataQua
 	concordant := minFloat(float64(len(signals)+countChangedVariables(variables))/3, 1) * 0.3
 
 	eventPresence := 0.0
-	if len(events) == 0 || explainingEvent(events) != nil {
+	if !hasInformativeEvent(events) || explainingEvent(events) != nil {
 		eventPresence = 0.2
 	}
 
