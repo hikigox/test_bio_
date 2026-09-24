@@ -1,0 +1,31 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      PORT: "8080"
+      DB_PATH: /var/lib/app/energy.db
+      DATA_DIR: /data
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      DEMO_EMAIL: ${DEMO_EMAIL:-demo@energy.local}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-demo1234}
+      LLM_EXPLAIN: ${LLM_EXPLAIN:-0}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - dbdata:/var/lib/app
+      - ./data:/data:ro        # solo readings.csv y events.csv
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  dbdata:

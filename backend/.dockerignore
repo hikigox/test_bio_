@@ -1,0 +1,4 @@
+*.db
+.git
+expected_results.csv
+**/expected_results.csv
