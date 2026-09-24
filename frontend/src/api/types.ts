@@ -53,5 +53,13 @@ export interface DashboardSummary {
   anomalies: number;
   high_priority: number;
   avg_confidence: number;
-  by_meter: { meter_id: string; consumption_kwh: number; status: string }[];
+  by_meter: {
+    meter_id: string;
+    consumption_kwh: number;
+    share_pct: number;
+    status: string;
+    // vacío ("") cuando el medidor no tiene ninguna anomalía vigente
+    // (backend/internal/api/dashboard.go: zero-value de Severity).
+    severity: "" | "HIGH" | "MEDIUM" | "LOW";
+  }[];
 }
