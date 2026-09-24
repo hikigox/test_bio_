@@ -112,8 +112,8 @@ type Signal struct {
 // (independiente de si generó señal DATA_QUALITY), para alimentar
 // evidence.data_quality_issues.
 type DataQualityIssue struct {
-	Kind  string
-	Count int
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
 }
 
 // Event es un evento operativo reportado para un medidor (nueva línea de
@@ -177,10 +177,10 @@ const (
 // para que la puntuación sea explicable en la evidencia. Los cuatro suman
 // como máximo 1.0 (0.4 + 0.3 + 0.2 + 0.1).
 type ConfidenceBreakdown struct {
-	SignalStrength    float64 // 0–0.4: magnitud de la variación observada
-	ConcordantSignals float64 // 0–0.3: nº de señales y variables coherentes
-	EventPresence     float64 // 0 o 0.2: el cuadro de eventos es concluyente
-	DataQuality       float64 // 0 o 0.1: el medidor no tiene datos defectuosos
+	SignalStrength    float64 `json:"signal_strength"`    // 0–0.4: magnitud de la variación observada
+	ConcordantSignals float64 `json:"concordant_signals"` // 0–0.3: nº de señales y variables coherentes
+	EventPresence     float64 `json:"event_presence"`     // 0 o 0.2: el cuadro de eventos es concluyente
+	DataQuality       float64 `json:"data_quality"`       // 0 o 0.1: el medidor no tiene datos defectuosos
 }
 
 // Evidence agrupa la traza de decisión de un análisis (02 §9, evidence_json de
