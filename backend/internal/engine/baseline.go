@@ -105,10 +105,16 @@ func DetectChangePoint(readings []Reading, cfg Config) ChangePoint {
 	k := 0.5 * sigma
 	h := 5 * sigma
 
+	// La acumulación CUSUM empieza *después* de la ventana de referencia. La
+	// ventana de referencia es, por definición, el período que se asume previo
+	// a cualquier cambio (de ahí que sirva para estimar sigma); buscar dentro
+	// de ella "el punto de cambio" es incoherente y, en la práctica, hace que
+	// una bajada ordinaria del propio ruido con el que se calibró sigma cruce
+	// h = 5σ y se reporte como cambio días antes del salto real.
 	var cusumHigh, cusumLow float64
 	changeIdx := -1
-	for i, v := range totals {
-		res := v - median
+	for i := refDays; i < len(totals); i++ {
+		res := totals[i] - median
 		cusumHigh = maxFloat(0, cusumHigh+res-k)
 		cusumLow = minFloat(0, cusumLow+res+k)
 		if cusumHigh > h || -cusumLow > h {
@@ -119,7 +125,90 @@ func DetectChangePoint(readings []Reading, cfg Config) ChangePoint {
 	if changeIdx == -1 {
 		return ChangePoint{Found: false}
 	}
-	return ChangePoint{Found: true, At: days[changeIdx], Sigma: sigma}
+
+	// Extensión del cambio: días consecutivos, desde el día detectado, cuya
+	// desviación respecto a la mediana de referencia mantiene el mismo signo y
+	// supera la holgura k del propio CUSUM. Sin esto, un cambio transitorio
+	// (una parada de 12 h) se mediría contra todo lo que viene detrás —días que
+	// ya volvieron a la normalidad— y su magnitud quedaría diluida hasta
+	// parecer insignificante, igual que le pasa a un salto real si se mide
+	// contra los días previos.
+	//
+	// No se extiende hacia atrás: con h = 5σ y saltos de esta magnitud el CUSUM
+	// dispara en el propio día del cambio, y retroceder mientras la desviación
+	// supere k absorbe con facilidad días de ruido ordinario del baseline.
+	start := changeIdx
+	end := changeIdx // último día incluido
+	delta := totals[changeIdx] - median
+	if abs(delta) > k {
+		for end+1 < len(totals) {
+			next := totals[end+1] - median
+			if (next > 0) != (delta > 0) || abs(next) <= k {
+				break
+			}
+			end++
+		}
+	}
+
+	at := days[start]
+	// Refinamiento horario del inicio: el CUSUM trabaja sobre totales diarios,
+	// así que solo localiza el día. Si dentro de ese día hay una hora a partir
+	// de la cual el nivel salta en la misma dirección que el cambio, el cambio
+	// empieza ahí, y arrastrar las horas normales previas vuelve a diluir la
+	// magnitud. Solo se refina el inicio: el final se deja en la frontera del
+	// día para no recortar un cambio que sigue vigente al terminar la serie.
+	if refined, ok := refineStartHour(readings, days[start], median/24, totals[start]/24, delta > 0); ok {
+		at = refined
+	}
+	endsAt := days[end].Add(24 * time.Hour)
+
+	return ChangePoint{Found: true, At: at, EndsAt: endsAt, Sigma: sigma}
+}
+
+// refineStartHourFraction: fracción del salto de nivel por hora que debe
+// alcanzar la diferencia de medianas de un corte horario para aceptarlo como
+// inicio real del cambio dentro del día. 0.5 (decisión de diseño) exige que el
+// corte explique al menos la mitad del salto; por debajo de eso lo más probable
+// es que el cambio ya estuviera presente desde el comienzo del día y que el
+// mejor corte sea solo el perfil horario normal del medidor.
+const refineStartHourFraction = 0.5
+
+// refineStartHour busca, dentro del día day, la hora de corte que maximiza la
+// diferencia de medianas entre las lecturas previas y las posteriores, exigiendo
+// que la dirección del salto coincida con la del cambio diario (increase) y que
+// la diferencia alcance refineStartHourFraction del salto de nivel por hora
+// (|nivelCambiado - nivelBaseline| / 24). Devuelve ok=false si ningún corte lo
+// cumple, en cuyo caso el cambio se toma desde el inicio del día.
+func refineStartHour(readings []Reading, day time.Time, baselinePerHour, changedPerHour float64, increase bool) (time.Time, bool) {
+	dayEnd := day.Add(24 * time.Hour)
+	var vals []float64
+	var stamps []time.Time
+	for _, r := range readings {
+		if r.Timestamp.Before(day) || !r.Timestamp.Before(dayEnd) {
+			continue
+		}
+		vals = append(vals, r.ConsumptionKWh)
+		stamps = append(stamps, r.Timestamp)
+	}
+	if len(vals) < 4 {
+		return time.Time{}, false
+	}
+
+	minGap := refineStartHourFraction * math.Abs(changedPerHour-baselinePerHour)
+	bestGap, bestIdx := 0.0, -1
+	for i := 1; i < len(vals); i++ {
+		gap := Median(vals[i:]) - Median(vals[:i])
+		if !increase {
+			gap = -gap
+		}
+		if gap > bestGap {
+			bestGap, bestIdx = gap, i
+		}
+	}
+	if bestIdx < 0 || bestGap < minGap {
+		return time.Time{}, false
+	}
+	return stamps[bestIdx], true
 }
 
 func maxFloat(a, b float64) float64 {

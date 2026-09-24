@@ -17,10 +17,19 @@ type Reading struct {
 }
 
 // ChangePoint describe el resultado de la detección de punto de cambio (CUSUM).
+//
+// At es el instante en que empieza el cambio y EndsAt el final (exclusivo) del
+// tramo en el que el cambio se mantiene. Un cambio que llega hasta el final de
+// la serie tiene EndsAt = fin de la última lectura; un cambio transitorio (p.ej.
+// una parada de 12 h) tiene EndsAt en el momento en que el consumo vuelve a su
+// nivel normal. Ese par [At, EndsAt) es el tramo sobre el que se mide
+// variation_pct (02 §1): medir "actual" sobre todo el período diluye el cambio
+// con los días que no cambiaron.
 type ChangePoint struct {
-	Found bool
-	At    time.Time
-	Sigma float64
+	Found  bool
+	At     time.Time
+	EndsAt time.Time
+	Sigma  float64
 }
 
 // HourlyProfile es el perfil horario de consumo de un medidor sobre una ventana baseline.
@@ -219,6 +228,10 @@ type MeterResult struct {
 // umbrales, detección de señales, correlación de variables, emparejamiento de
 // eventos, clasificación y explicación por plantilla.
 //
+// readings debe venir ordenado por timestamp ascendente: el refinamiento
+// horario del punto de cambio y la comprobación de persistencia por bloques
+// recorren la serie en orden.
+//
 // events puede contener eventos de otros medidores (p.ej. si el llamador pasa
 // la tabla completa de eventos del período); Run filtra por meterID antes de
 // pasarlos a MatchEvents, porque MatchEvents solo compara por ventana de
@@ -244,12 +257,9 @@ func Run(meterID string, readings []Reading, events []Event, fleetCV float64, cf
 	signals, issues := DetectSignals(readings, profile, cp, th, cfg)
 	variables := CorrelateVariables(readings, profile, cp)
 
-	actualKWh := sumKWh(readings)
-	baselineKWh := extrapolateBaseline(profile, readings)
-	variationPct := 0.0
-	if baselineKWh != 0 {
-		variationPct = (actualKWh - baselineKWh) / baselineKWh * 100
-	}
+	// 02 §1: variation_pct se mide sobre el tramo posterior al punto de cambio
+	// (o sobre todo el período si no hay cambio). Ver ComputeVariation.
+	actualKWh, baselineKWh, variationPct := ComputeVariation(readings, profile, cp)
 
 	// MatchEvents solo filtra por ventana de tiempo, no por medidor: hay que
 	// acotar a los eventos de este medidor antes de llamarlo.
@@ -267,7 +277,7 @@ func Run(meterID string, readings []Reading, events []Event, fleetCV float64, cf
 		Signals: signals, Variables: variables, Events: relatedEvents,
 	}
 
-	typ, sev, confidence, breakdown, path := Classify(signals, issues, relatedEvents, variables, variationPct)
+	typ, sev, confidence, breakdown, path := Classify(signals, issues, relatedEvents, variables, variationPct, th.VariationPct)
 	if typ == "" {
 		result.HasAnomaly = false
 		return result

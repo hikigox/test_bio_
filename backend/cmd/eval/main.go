@@ -160,16 +160,12 @@ func runEngineOverStore(db *store.DB) map[string]actualRow {
 	}
 
 	// Drain and close the meter_id query fully before issuing any per-meter
-	// queries below. Opening a nested query on the same *sql.DB while these
-	// rows are still open forces database/sql to grab a second pooled
-	// connection — and for a ":memory:" SQLite database (as used by cmd/eval
-	// and its tests), a second connection is a completely separate, empty
-	// database with no shared cache. That silently made loadMeterReadings /
-	// loadMeterEvents return zero rows for every meter, so engine.Run always
-	// saw empty readings and every result came back HasAnomaly=false. Fully
-	// collecting meterIDs first (single connection, then returned to the
-	// pool) and querying sequentially afterward keeps everything on one
-	// connection.
+	// queries below. store.Open now pins an in-memory database's pool to a
+	// single connection (a second connection to a ":memory:" DSN is a
+	// completely separate, empty database), so a nested query can no longer
+	// silently read zero rows — but with one connection it would instead WAIT
+	// for this cursor to be released. Either way the discipline is the same
+	// and still required: collect meterIDs first, then query sequentially.
 	var meterIDs []string
 	for rows.Next() {
 		var meterID string
