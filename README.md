@@ -35,8 +35,9 @@ Frontend (desde `frontend/`, en otra terminal):
 npm install
 npm run dev
 ```
-Sirve en `http://localhost:5173` y llama al backend en `:8080` directamente
-(sin proxy nginx — eso solo existe en la imagen Docker de producción).
+Sirve en `http://localhost:5173`. El frontend llama a `/api/...` y el dev
+server de Vite lo redirige a `:8080` (ver `vite.config.ts`); en producción
+(Docker) ese rol lo cumple nginx.
 
 ## Arquitectura
 
@@ -90,10 +91,10 @@ Sirve en `http://localhost:5173` y llama al backend en `:8080` directamente
   la explicación es siempre por plantillas. La spec original marca esto como
   opcional ("LLM opcional solo para redactar la explicación; nunca decide ni
   inventa cifras") — quedó fuera de alcance del MVP, no es un bug.
-- **Sin smoke test end-to-end en CI**: el smoke test Playwright (ver
-  `frontend/e2e/`) existe pero no corre automáticamente en ningún pipeline —
-  se ejecuta manualmente (`npm run test:e2e` desde `frontend/`, requiere los
-  servidores de desarrollo levantados).
+- **Sin smoke test end-to-end todavía**: no hay un test automatizado de
+  browser real para el flujo principal — solo tests unitarios (Vitest) y
+  revisión manual. Planeado como parte del cierre de esta fase (ver Task 3
+  del plan `docs/superpowers/plans/2026-09-24-cierre-demo.md`).
 - **Bundle de frontend sin code-splitting**: ~675kB minificado en un solo
   chunk (`npm run build` avisa sobre esto). No afecta la demo; sería el
   primer punto de optimización si esto pasara a producción real.
