@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -9,15 +10,28 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type periodRange struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type baselineRefSummary struct {
+	WindowFrom string `json:"window_from"`
+	WindowTo   string `json:"window_to"`
+	Method     string `json:"method"`
+}
+
 type meterListItem struct {
-	MeterID        string          `json:"meter_id"`
-	Name           string          `json:"name"`
-	ConsumptionKWh *float64        `json:"consumption_kwh"`
-	BaselineKWh    *float64        `json:"baseline_kwh"`
-	VariationPct   *float64        `json:"variation_pct"`
-	Status         string          `json:"status"`
-	AnalysisID     *int64          `json:"analysis_id"`
-	Anomaly        *anomalySummary `json:"anomaly"`
+	MeterID        string              `json:"meter_id"`
+	Name           string              `json:"name"`
+	ConsumptionKWh *float64            `json:"consumption_kwh"`
+	BaselineKWh    *float64            `json:"baseline_kwh"`
+	VariationPct   *float64            `json:"variation_pct"`
+	Status         string              `json:"status"`
+	AnalysisID     *int64              `json:"analysis_id"`
+	BaselineRef    *baselineRefSummary `json:"baseline_ref"`
+	AnalysisPeriod *periodRange        `json:"analysis_period"`
+	Anomaly        *anomalySummary     `json:"anomaly"`
 }
 
 type anomalySummary struct {
@@ -31,18 +45,52 @@ type anomalySummary struct {
 	ActiveTo     string  `json:"active_to"`
 }
 
-// meterAnalysisFields fetches the current anomaly (if any) for meterID and
-// fills the analysis-derived fields of item: consumption/baseline/variation,
-// analysis_id, and, if a range is given, the in_range flag on the anomaly
-// summary. A never-analyzed meter (CurrentAnomaly returns nil) leaves item's
-// pointer fields nil, which json.Marshal renders as `null` — no anomaly
-// summary and no baseline/variation, exactly as spec 03 requires.
-func meterAnalysisFields(s *Server, meterID string, item *meterListItem, ranks map[int64]int, from, to time.Time, hasRange bool) {
-	anomaly, err := CurrentAnomaly(s.DB, meterID)
-	if err != nil || anomaly == nil {
-		return
+// baselineDetail is the full baseline block on GET /meters/:meterId (spec 03:
+// "igual que un item de la lista, más baseline{hourly_profile,voltage,
+// current,power_factor,change_point_at}...").
+type baselineDetail struct {
+	HourlyProfile []float64 `json:"hourly_profile"`
+	Voltage       float64   `json:"voltage"`
+	Current       float64   `json:"current"`
+	PowerFactor   float64   `json:"power_factor"`
+	ChangePointAt *string   `json:"change_point_at"`
+}
+
+type meterDetail struct {
+	meterListItem
+	Baseline           *baselineDetail `json:"baseline"`
+	CurrentVoltage     *float64        `json:"current_voltage"`
+	CurrentCurrent     *float64        `json:"current_current"`
+	CurrentPowerFactor *float64        `json:"current_power_factor"`
+	LatestAnomaly      *anomalySummary `json:"latest_anomaly"`
+}
+
+// meterAnalysisFields fills the analysis-derived fields of item: baseline_ref
+// and analysis_id are set for any meter that has ever been analyzed (spec
+// 03), independent of whether it currently has an anomaly; consumption/
+// baseline/variation, analysis_period and the anomaly summary are only set
+// when the meter's vigente analysis (Task 3's currentAnalysisID) produced an
+// anomaly. A never-analyzed meter leaves every pointer field nil, which
+// json.Marshal renders as `null` — no panic on the nil-anomaly path.
+//
+// Returns the resolved analysisID/found/anomaly so callers building the
+// GET /meters/:meterId detail response (baseline block, current V/I/PF,
+// latest_anomaly) don't need to re-run the same lookups.
+func meterAnalysisFields(s *Server, meterID string, item *meterListItem, ranks map[int64]int, from, to time.Time, hasRange bool) (analysisID int64, found bool, anomaly *AnomalyRow) {
+	analysisID, found, err := currentAnalysisID(s.DB, meterID)
+	if err != nil || !found {
+		return 0, false, nil
 	}
-	item.AnalysisID = &anomaly.AnalysisID
+	item.AnalysisID = &analysisID
+
+	if ref, err := fetchBaselineRef(s.DB, analysisID, meterID); err == nil {
+		item.BaselineRef = ref
+	}
+
+	anomaly, err = CurrentAnomaly(s.DB, meterID)
+	if err != nil || anomaly == nil {
+		return analysisID, true, nil
+	}
 
 	var baselineKWh, actualKWh, variationPct float64
 	if !hasRange {
@@ -52,16 +100,16 @@ func meterAnalysisFields(s *Server, meterID string, item *meterListItem, ranks m
 		// that period are no longer retained).
 		baselineKWh, actualKWh, variationPct = anomaly.BaselineKWh, anomaly.ActualKWh, anomaly.VariationPct
 	} else {
-		var err error
 		baselineKWh, actualKWh, err = BaselineForRange(s.DB, meterID, from, to)
 		if err != nil {
-			return
+			return analysisID, true, anomaly
 		}
 		if baselineKWh != 0 {
 			variationPct = (actualKWh - baselineKWh) / baselineKWh * 100
 		}
 	}
 	item.ConsumptionKWh, item.BaselineKWh, item.VariationPct = &actualKWh, &baselineKWh, &variationPct
+	item.AnalysisPeriod = &periodRange{From: anomaly.PeriodFrom.Format(time.RFC3339), To: anomaly.PeriodTo.Format(time.RFC3339)}
 
 	activeFrom, activeTo := ActiveWindow(*anomaly)
 	inRange := true
@@ -73,6 +121,82 @@ func meterAnalysisFields(s *Server, meterID string, item *meterListItem, ranks m
 		PriorityRank: ranks[anomaly.ID], InRange: inRange,
 		ActiveFrom: activeFrom.Format(time.RFC3339), ActiveTo: activeTo.Format(time.RFC3339),
 	}
+	return analysisID, true, anomaly
+}
+
+// fetchBaselineRef reads the (window_from, window_to, method) reference from
+// the meter's meter_baselines row for analysisID (spec 03 item.baseline_ref).
+func fetchBaselineRef(db *store.DB, analysisID int64, meterID string) (*baselineRefSummary, error) {
+	var windowFrom, windowTo, method sql.NullString
+	err := db.QueryRow(`SELECT window_from, window_to, method FROM meter_baselines WHERE analysis_id = ? AND meter_id = ?`,
+		analysisID, meterID).Scan(&windowFrom, &windowTo, &method)
+	if err != nil {
+		return nil, err
+	}
+	return &baselineRefSummary{WindowFrom: windowFrom.String, WindowTo: windowTo.String, Method: method.String}, nil
+}
+
+// fetchBaselineDetail reads the full baseline block for GET /meters/:meterId
+// (spec 03: hourly_profile, voltage/current/power_factor baseline, and
+// change_point_at) from the meter's meter_baselines row for analysisID.
+func fetchBaselineDetail(db *store.DB, analysisID int64, meterID string) (*baselineDetail, error) {
+	var profileJSON string
+	var changePointAt sql.NullString
+	var voltage, current, powerFactor sql.NullFloat64
+	err := db.QueryRow(`SELECT hourly_profile_json, change_point_at, baseline_voltage_v, baseline_current_a, baseline_power_factor
+		FROM meter_baselines WHERE analysis_id = ? AND meter_id = ?`, analysisID, meterID).
+		Scan(&profileJSON, &changePointAt, &voltage, &current, &powerFactor)
+	if err != nil {
+		return nil, err
+	}
+	var profile []float64
+	if err := json.Unmarshal([]byte(profileJSON), &profile); err != nil {
+		return nil, err
+	}
+	detail := &baselineDetail{HourlyProfile: profile, Voltage: voltage.Float64, Current: current.Float64, PowerFactor: powerFactor.Float64}
+	if changePointAt.Valid {
+		v := changePointAt.String
+		detail.ChangePointAt = &v
+	}
+	return detail, nil
+}
+
+// fetchAnalysisDataPeriod reads the overall data_from/data_to covered by
+// analysisID (used as the "current" V/I/PF window when the meter has no
+// current anomaly — i.e. it was analyzed but is currently normal — and the
+// caller supplied no explicit ?from=&to=).
+func fetchAnalysisDataPeriod(db *store.DB, analysisID int64) (from, to time.Time, err error) {
+	var fromStr, toStr string
+	if err := db.QueryRow(`SELECT data_from, data_to FROM analyses WHERE id = ?`, analysisID).Scan(&fromStr, &toStr); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	from, _ = time.Parse(time.RFC3339, fromStr)
+	to, _ = time.Parse(time.RFC3339, toStr)
+	return from, to, nil
+}
+
+// averageElectricals computes the average voltage/current/power_factor over
+// the meter's readings in [from, to) — the "current" V/I/PF for the period
+// (spec 03 GET /meters/:meterId), mirroring how BaselineForRange sums
+// consumption over the same kind of window.
+func averageElectricals(db *store.DB, meterID string, from, to time.Time) (voltage, current, powerFactor *float64, err error) {
+	var v, c, pf sql.NullFloat64
+	err = db.QueryRow(`SELECT AVG(voltage_v), AVG(current_a), AVG(power_factor) FROM readings
+		WHERE meter_id = ? AND timestamp >= ? AND timestamp < ?`,
+		meterID, from.Format(time.RFC3339), to.Format(time.RFC3339)).Scan(&v, &c, &pf)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if v.Valid {
+		voltage = &v.Float64
+	}
+	if c.Valid {
+		current = &c.Float64
+	}
+	if pf.Valid {
+		powerFactor = &pf.Float64
+	}
+	return voltage, current, powerFactor, nil
 }
 
 func registerMeterRoutes(r chi.Router, s *Server) {
@@ -117,11 +241,22 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 			meterAnalysisFields(s, mr.meterID, &item, ranks, from, to, hasRange)
 			items = append(items, item)
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+		// Top-level period echoes the caller's ?from=&to= verbatim. There is
+		// no single well-defined "period" for a fleet-wide list when no
+		// filter is given — different meters can have different analysis
+		// periods — so it's left blank (matching spec 03's own JSON example,
+		// which shows blank placeholders here) rather than picking one
+		// meter's period arbitrarily.
+		period := periodRange{}
+		if hasRange {
+			period.From, period.To = from.Format(time.RFC3339), to.Format(time.RFC3339)
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"period": period, "items": items})
 	})
 
 	r.Get("/meters/{meterId}", func(w http.ResponseWriter, req *http.Request) {
 		meterID := chi.URLParam(req, "meterId")
+		from, to, hasRange := parseRangeParams(req)
 		var status string
 		var name sql.NullString
 		err := s.DB.QueryRow(`SELECT name, status FROM meters WHERE meter_id = ?`, meterID).Scan(&name, &status)
@@ -135,9 +270,26 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 		}
 		item := meterListItem{MeterID: meterID, Name: name.String, Status: status}
 		ranks := priorityRanks(s.DB)
-		var from, to time.Time
-		meterAnalysisFields(s, meterID, &item, ranks, from, to, false)
-		writeJSON(w, http.StatusOK, item)
+		analysisID, found, anomaly := meterAnalysisFields(s, meterID, &item, ranks, from, to, hasRange)
+
+		detail := meterDetail{meterListItem: item, LatestAnomaly: item.Anomaly}
+		if found {
+			if b, err := fetchBaselineDetail(s.DB, analysisID, meterID); err == nil {
+				detail.Baseline = b
+			}
+			vipFrom, vipTo := from, to
+			if !hasRange {
+				if anomaly != nil {
+					vipFrom, vipTo = anomaly.PeriodFrom, anomaly.PeriodTo
+				} else if dataFrom, dataTo, err := fetchAnalysisDataPeriod(s.DB, analysisID); err == nil {
+					vipFrom, vipTo = dataFrom, dataTo
+				}
+			}
+			if v, c, pf, err := averageElectricals(s.DB, meterID, vipFrom, vipTo); err == nil {
+				detail.CurrentVoltage, detail.CurrentCurrent, detail.CurrentPowerFactor = v, c, pf
+			}
+		}
+		writeJSON(w, http.StatusOK, detail)
 	})
 
 	r.Get("/meters/{meterId}/readings", func(w http.ResponseWriter, req *http.Request) {
@@ -172,7 +324,15 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 
 	r.Get("/meters/{meterId}/events", func(w http.ResponseWriter, req *http.Request) {
 		meterID := chi.URLParam(req, "meterId")
-		rows, err := s.DB.Query(`SELECT timestamp, type, description FROM events WHERE meter_id = ? ORDER BY timestamp`, meterID)
+		from, to, hasRange := parseRangeParams(req)
+		query := `SELECT timestamp, type, description FROM events WHERE meter_id = ?`
+		args := []interface{}{meterID}
+		if hasRange {
+			query += ` AND timestamp >= ? AND timestamp <= ?`
+			args = append(args, from.Format(time.RFC3339), to.Format(time.RFC3339))
+		}
+		query += ` ORDER BY timestamp`
+		rows, err := s.DB.Query(query, args...)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "error leyendo eventos")
 			return
@@ -198,7 +358,9 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 	r.Get("/meters/{meterId}/anomalies", func(w http.ResponseWriter, req *http.Request) {
 		meterID := chi.URLParam(req, "meterId")
 		scope := req.URL.Query().Get("scope")
-		query := `SELECT a.id, a.type, a.severity, a.confidence, a.status FROM anomalies a
+		from, to, hasRange := parseRangeParams(req)
+		query := `SELECT a.id, a.type, a.severity, a.confidence, a.status, a.period_from, a.period_to, a.change_point_at
+			FROM anomalies a
 			JOIN analyses an ON an.id = a.analysis_id WHERE a.meter_id = ? AND an.status = 'COMPLETED'`
 		if scope != "history" {
 			query += ` ORDER BY an.finished_at DESC LIMIT 1`
@@ -221,9 +383,24 @@ func registerMeterRoutes(r chi.Router, s *Server) {
 		out := []item{}
 		for rows.Next() {
 			var i item
-			if err := rows.Scan(&i.ID, &i.Type, &i.Severity, &i.Confidence, &i.Status); err != nil {
+			var periodFrom, periodTo string
+			var changePointAt sql.NullString
+			if err := rows.Scan(&i.ID, &i.Type, &i.Severity, &i.Confidence, &i.Status, &periodFrom, &periodTo, &changePointAt); err != nil {
 				writeError(w, http.StatusInternalServerError, "error leyendo anomalías")
 				return
+			}
+			if hasRange {
+				a := AnomalyRow{}
+				a.PeriodFrom, _ = time.Parse(time.RFC3339, periodFrom)
+				a.PeriodTo, _ = time.Parse(time.RFC3339, periodTo)
+				if changePointAt.Valid {
+					t, _ := time.Parse(time.RFC3339, changePointAt.String)
+					a.ChangePointAt = &t
+				}
+				activeFrom, activeTo := ActiveWindow(a)
+				if !Overlaps(activeFrom, activeTo, from, to) {
+					continue
+				}
 			}
 			out = append(out, i)
 		}

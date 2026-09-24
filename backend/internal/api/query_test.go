@@ -14,8 +14,10 @@ func setupAnalysisWithAnomaly(t *testing.T, db *store.DB) (analysisID int64) {
 		t.Fatal(err)
 	}
 	analysisID, _ = res.LastInsertId()
-	_, err = db.Exec(`INSERT INTO meter_baselines (analysis_id, meter_id, method, hourly_profile_json, baseline_kwh, actual_kwh, variation_pct)
-		VALUES (?, 'M-109', 'HOURLY_MEDIAN', ?, 1070, 2180, 103.7)`, analysisID, hourlyProfileJSONFixture())
+	_, err = db.Exec(`INSERT INTO meter_baselines (analysis_id, meter_id, method, window_from, window_to, change_point_at,
+		hourly_profile_json, baseline_kwh, actual_kwh, variation_pct, baseline_voltage_v, baseline_current_a, baseline_power_factor)
+		VALUES (?, 'M-109', 'HOURLY_MEDIAN', '2026-08-18T00:00:00Z', '2026-08-31T23:00:00Z', '2026-09-08T00:00:00Z',
+		?, 1070, 2180, 103.7, 220, 10, 0.95)`, analysisID, hourlyProfileJSONFixture())
 	if err != nil {
 		t.Fatal(err)
 	}
