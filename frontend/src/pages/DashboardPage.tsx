@@ -5,7 +5,7 @@ import { useDateRange } from "../context/DateRangeContext";
 import { getDashboardSummary } from "../api/dashboard";
 import { getAnomalies } from "../api/anomalies";
 import type { DashboardSummary, AnomalySummary } from "../api/types";
-import { formatNumberEsES, meterColor, severityColor } from "../lib/format";
+import { formatNumberEsES, meterColor, severityColor, toLocalDateStr, toLocalDateTimeStr } from "../lib/format";
 import RunAnalysisButton from "../components/RunAnalysisButton";
 import ErrorState from "../components/ErrorState";
 
@@ -51,7 +51,7 @@ export default function DashboardPage() {
         <Kpi label="Confianza IA" value={`${Math.round(summary.avg_confidence * 100)}%`} />
         <Kpi
           label="Último análisis"
-          value={summary.last_analysis ? summary.last_analysis.at.slice(0, 16).replace("T", " ") : "Sin análisis"}
+          value={summary.last_analysis ? toLocalDateTimeStr(summary.last_analysis.at) : "Sin análisis"}
         />
       </div>
 
@@ -109,7 +109,7 @@ export default function DashboardPage() {
               onClick={() => navigate(`/anomalies/${a.id}`)}
             >
               <span className="truncate">{a.meter_id}</span>
-              <span className="text-xs text-slate-500 text-center">{a.active_from.slice(0, 10)} – {a.active_to.slice(0, 10)}</span>
+              <span className="text-xs text-slate-500 text-center">{toLocalDateStr(a.active_from)} – {toLocalDateStr(a.active_to)}</span>
               <span className={`justify-self-end px-2 py-0.5 rounded text-xs ${severityColor(a.severity)}`}>{a.severity}</span>
             </li>
           ))}

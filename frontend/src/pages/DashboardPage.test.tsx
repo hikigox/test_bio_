@@ -5,6 +5,7 @@ import { DateRangeProvider } from "../context/DateRangeContext";
 import DashboardPage from "./DashboardPage";
 import * as dashboardApi from "../api/dashboard";
 import * as anomaliesApi from "../api/anomalies";
+import { toLocalDateTimeStr } from "../lib/format";
 
 describe("DashboardPage", () => {
   it("renders KPIs and the pie chart without crashing when a meter has no anomaly", async () => {
@@ -29,7 +30,10 @@ describe("DashboardPage", () => {
     );
 
     await waitFor(() => expect(screen.getByText("3.000 kWh")).toBeInTheDocument());
-    expect(screen.getByText(/2026-09-14 23:00/)).toBeInTheDocument();
+    // El dashboard ahora muestra la hora local del navegador, no el UTC crudo
+    // del backend — se compara contra el mismo helper para no depender de la
+    // zona horaria de quien corra el test.
+    expect(screen.getByText(toLocalDateTimeStr("2026-09-14T23:00:00Z"))).toBeInTheDocument();
   });
 
   it("shows 'Sin análisis' when last_analysis is null", async () => {

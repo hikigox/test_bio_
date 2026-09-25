@@ -7,6 +7,7 @@ import SeverityBadge from "../components/SeverityBadge";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import { label } from "../lib/labels";
+import { toLocalDateStr } from "../lib/format";
 
 type Item = AnomalySummary & { meter_id: string };
 
@@ -95,7 +96,7 @@ export default function AnomaliesPage() {
                 <td className="p-3">{label(a.type)}</td>
                 <td className="p-3"><SeverityBadge severity={a.severity} /></td>
                 <td className="p-3">{a.confidence >= 0.85 ? "Alta" : a.confidence >= 0.6 ? "Media" : "Baja"}</td>
-                <td className="p-3">{a.active_from.slice(0, 10)} – {a.active_to.slice(0, 10)}</td>
+                <td className="p-3">{toLocalDateStr(a.active_from)} – {toLocalDateStr(a.active_to)}</td>
                 <td className="p-3 text-blue-600">Investigar</td>
               </tr>
             ))}

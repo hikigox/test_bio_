@@ -4,7 +4,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceArea, ReferenceLine, C
 import { useDateRange } from "../context/DateRangeContext";
 import { getMeter, getMeterAnomalies, getMeterReadings, getMeterEvents } from "../api/meters";
 import type { AnomalySummaryLite, MeterDetail } from "../api/types";
-import { formatNumberEsES, formatPercent } from "../lib/format";
+import { formatNumberEsES, formatPercent, toLocalDateStr, toLocalDateTimeStr, toLocalMonthDayStr } from "../lib/format";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
 import RunAnalysisButton from "../components/RunAnalysisButton";
@@ -91,9 +91,9 @@ export default function MeterDetailPage() {
         <h3 className="font-medium text-slate-900 mb-2">Consumo vs. baseline</h3>
         <LineChart width={700} height={280} data={readingsWithBaseline}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="timestamp" tickFormatter={(t) => t.slice(5, 10)} />
+          <XAxis dataKey="timestamp" tickFormatter={(t) => toLocalMonthDayStr(t)} />
           <YAxis />
-          <Tooltip labelFormatter={(t) => `${t} UTC`} />
+          <Tooltip labelFormatter={(t) => toLocalDateTimeStr(String(t))} />
           {anomaly && (
             <ReferenceArea x1={anomaly.active_from} x2={anomaly.active_to} fill="#fca5a5" fillOpacity={0.2} />
           )}
@@ -155,7 +155,7 @@ export default function MeterDetailPage() {
         {events.length === 0 && <p className="text-sm text-slate-400">Sin eventos registrados</p>}
         <ul className="text-sm divide-y">
           {events.map((e, i) => (
-            <li key={i} className="py-2">{e.timestamp.slice(0, 10)} · {label(e.type)} — {e.description}</li>
+            <li key={i} className="py-2">{toLocalDateStr(e.timestamp)} · {label(e.type)} — {e.description}</li>
           ))}
         </ul>
       </div>
@@ -181,9 +181,9 @@ function ElectricalChart({
       <h3 className="font-medium text-slate-900 mb-2">{title}</h3>
       <LineChart width={220} height={180} data={readings}>
         <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="timestamp" tickFormatter={(t) => t.slice(5, 10)} />
+        <XAxis dataKey="timestamp" tickFormatter={(t) => toLocalMonthDayStr(t)} />
         <YAxis />
-        <Tooltip labelFormatter={(t) => `${t} UTC`} />
+        <Tooltip labelFormatter={(t) => toLocalDateTimeStr(String(t))} />
         {anomaly && (
           <ReferenceArea x1={anomaly.active_from} x2={anomaly.active_to} fill="#fca5a5" fillOpacity={0.2} />
         )}

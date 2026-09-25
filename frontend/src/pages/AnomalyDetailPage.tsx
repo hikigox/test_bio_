@@ -5,6 +5,7 @@ import type { AnomalyDetail } from "../api/types";
 import SeverityBadge from "../components/SeverityBadge";
 import ErrorState from "../components/ErrorState";
 import { label } from "../lib/labels";
+import { toLocalDateTimeStr } from "../lib/format";
 
 export default function AnomalyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -64,7 +65,7 @@ export default function AnomalyDetailPage() {
       <div className="bg-white rounded-lg shadow-sm p-4">
         <h3 className="font-medium text-slate-900 mb-2">Cuándo ocurrió</h3>
         <p className="text-sm text-slate-700">
-          {anomaly.active_from.slice(0, 16).replace("T", " ")} – {anomaly.active_to.slice(0, 16).replace("T", " ")}
+          {toLocalDateTimeStr(anomaly.active_from)} – {toLocalDateTimeStr(anomaly.active_to)}
         </p>
         <p className="text-xs text-slate-500 mt-1">Duración: {anomaly.duration_hours.toFixed(1)} h</p>
         <p className="text-xs text-slate-500 mt-1">

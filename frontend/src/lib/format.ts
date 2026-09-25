@@ -7,6 +7,52 @@ export function formatNumberEsES(value: number): string {
   return new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0, useGrouping: true }).format(value);
 }
 
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+// El backend persiste y calcula todo en UTC (spec 01); estas funciones son
+// solo de PRESENTACIÓN — convierten esos timestamps a la hora local del
+// navegador del usuario, sin tocar nada de lo que viaja por la API. `new
+// Date(iso)` ya interpreta el "Z"/offset del ISO string y expone getters
+// locales (getFullYear/getHours/...), así que basta con leer esos getters en
+// vez de recortar el string UTC crudo como se hacía antes.
+export function toLocalDateStr(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export function toLocalDateTimeStr(iso: string): string {
+  const d = new Date(iso);
+  return `${toLocalDateStr(iso)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function toLocalMonthDayStr(iso: string): string {
+  const d = new Date(iso);
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Etiqueta corta del offset local respecto a UTC (p.ej. "UTC-5", "UTC+2:30"),
+// para indicar en la UI que las fechas mostradas ya no son UTC sino la hora
+// del sistema del usuario.
+export function localTimeZoneLabel(): string {
+  const offsetMin = -new Date().getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMin);
+  const hh = Math.floor(abs / 60);
+  const mm = abs % 60;
+  return mm === 0 ? `UTC${sign}${hh}` : `UTC${sign}${hh}:${pad(mm)}`;
+}
+
+// Convierte el valor de un <input type="date"> (una fecha calendario LOCAL,
+// sin hora) al instante UTC correspondiente a la medianoche LOCAL de ese día.
+// `new Date("YYYY-MM-DD")` interpretaría ese string como medianoche UTC, no
+// local — para un usuario que no está en UTC eso corre el rango un día.
+export function localDateInputToISO(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
 export function formatPercent(value: number): string {
   const sign = value >= 0 ? "+" : "-";
   const abs = Math.abs(value);

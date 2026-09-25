@@ -1,4 +1,5 @@
 import { useDateRange, type Preset } from "../../context/DateRangeContext";
+import { toLocalDateStr, localDateInputToISO, localTimeZoneLabel } from "../../lib/format";
 
 const PRESETS: { value: Preset; label: string }[] = [
   { value: "all", label: "Todo el período" },
@@ -23,23 +24,23 @@ export default function DateRangeControl() {
       </select>
       {preset === "custom" && (
         <>
-          <input type="date" value={range.from.slice(0, 10)}
-            min={dataRange.from.slice(0, 10)} max={dataRange.to.slice(0, 10)}
+          <input type="date" value={toLocalDateStr(range.from)}
+            min={toLocalDateStr(dataRange.from)} max={toLocalDateStr(dataRange.to)}
             onChange={(e) => {
               if (!e.target.value) return;
-              setCustomRange(new Date(e.target.value).toISOString(), range.to);
+              setCustomRange(localDateInputToISO(e.target.value), range.to);
             }}
             className="border rounded px-2 py-1 text-sm" />
-          <input type="date" value={range.to.slice(0, 10)}
-            min={dataRange.from.slice(0, 10)} max={dataRange.to.slice(0, 10)}
+          <input type="date" value={toLocalDateStr(range.to)}
+            min={toLocalDateStr(dataRange.from)} max={toLocalDateStr(dataRange.to)}
             onChange={(e) => {
               if (!e.target.value) return;
-              setCustomRange(range.from, new Date(e.target.value).toISOString());
+              setCustomRange(range.from, localDateInputToISO(e.target.value));
             }}
             className="border rounded px-2 py-1 text-sm" />
         </>
       )}
-      <span className="text-xs text-slate-400">UTC</span>
+      <span className="text-xs text-slate-400">{localTimeZoneLabel()}</span>
     </div>
   );
 }
