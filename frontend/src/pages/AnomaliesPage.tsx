@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useDateRange } from "../context/DateRangeContext";
 import { getAnomalies } from "../api/anomalies";
 import type { AnomalySummary } from "../api/types";
@@ -13,11 +13,31 @@ type Item = AnomalySummary & { meter_id: string };
 export default function AnomaliesPage() {
   const { range } = useDateRange();
   const navigate = useNavigate();
+  // El dashboard enlaza aquí con ?severity=HIGH (tarjeta "Alta prioridad"), así
+  // que los filtros viven en la URL en vez de solo en estado local: así el
+  // link es compartible/navegable con atrás-adelante, no solo un clic directo.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState("");
-  const [severityFilter, setSeverityFilter] = useState("");
+  const typeFilter = searchParams.get("type") ?? "";
+  const severityFilter = searchParams.get("severity") ?? "";
   const [error, setError] = useState<string | null>(null);
+
+  function setTypeFilter(value: string) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      value ? next.set("type", value) : next.delete("type");
+      return next;
+    });
+  }
+
+  function setSeverityFilter(value: string) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      value ? next.set("severity", value) : next.delete("severity");
+      return next;
+    });
+  }
 
   function load() {
     setLoading(true);

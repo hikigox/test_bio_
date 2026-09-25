@@ -10,19 +10,34 @@ export function usePolling<T>(
   key: string | number = "default"
 ) {
   const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const doneRef = useRef(false);
 
   useEffect(() => {
     doneRef.current = false;
+    setError(null);
     let cancelled = false;
 
     async function tick() {
       if (cancelled || doneRef.current) return;
-      const result = await fetcher();
-      if (cancelled) return;
-      setData(result);
-      if (isDone(result)) {
+      // Sin este try/catch, un solo fetch fallido (p.ej. el análisis
+      // desapareció porque el backend se reinició con otra base de datos, o
+      // un hiccup de red) rechaza esta promesa sin que nadie la espere ni la
+      // capture: el timeout nunca se reprograma y el polling muere en
+      // silencio, dejando a quien lo usa (p.ej. el botón "Analizando…")
+      // colgado para siempre sin ningún error visible.
+      try {
+        const result = await fetcher();
+        if (cancelled) return;
+        setData(result);
+        if (isDone(result)) {
+          doneRef.current = true;
+          return;
+        }
+      } catch (err) {
+        if (cancelled) return;
         doneRef.current = true;
+        setError(err);
         return;
       }
       timeoutId = setTimeout(tick, intervalMs);
@@ -36,5 +51,5 @@ export function usePolling<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  return { data };
+  return { data, error };
 }

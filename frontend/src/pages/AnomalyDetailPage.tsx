@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { getAnomaly, patchAnomaly } from "../api/anomalies";
 import type { AnomalyDetail } from "../api/types";
 import SeverityBadge from "../components/SeverityBadge";
@@ -125,12 +125,37 @@ export default function AnomalyDetailPage() {
 
       {signals.length > 0 && (
         <div className="bg-white rounded-lg shadow-sm p-4">
-          <h3 className="font-medium text-slate-900 mb-2">Señales</h3>
-          <ul className="text-xs text-slate-600 space-y-1">
-            {signals.map((s, i) => (
-              <li key={i}>{label(s.signal)}: observado {s.observed} vs. umbral {s.threshold} — {s.detail}</li>
-            ))}
-          </ul>
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="font-medium text-slate-900">Señales</h3>
+            <Link to="/glossary/signals" className="text-xs text-blue-600 hover:underline">
+              ¿Qué son y cómo se calculan? →
+            </Link>
+          </div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-400 border-b">
+                <th className="py-1 pr-2">Señal</th>
+                <th className="py-1 pr-2">Observado</th>
+                <th className="py-1 pr-2">Umbral</th>
+                <th className="py-1 pr-2">Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signals.map((s, i) => {
+                // Fuerte = duplica su propio umbral (mismo criterio que
+                // dataQualitySeverity/classify.go en el motor).
+                const strong = s.threshold > 0 && Math.abs(s.observed) >= 2 * s.threshold;
+                return (
+                  <tr key={i} className={`border-b last:border-0 ${strong ? "text-red-600 font-medium" : "text-slate-600"}`}>
+                    <td className="py-1 pr-2">{label(s.signal)}</td>
+                    <td className="py-1 pr-2">{s.observed.toFixed(2)}</td>
+                    <td className="py-1 pr-2">{s.threshold.toFixed(2)}</td>
+                    <td className="py-1 pr-2 text-slate-500 font-normal">{s.detail}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 

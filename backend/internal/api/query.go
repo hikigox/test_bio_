@@ -23,6 +23,7 @@ type AnomalyRow struct {
 	PeriodTo      time.Time
 	ChangePointAt *time.Time
 	Status        string
+	Reason        string
 }
 
 // currentAnalysisID determina el análisis vigente para meterID: el último
@@ -61,15 +62,16 @@ func CurrentAnomaly(db *store.DB, meterID string) (*AnomalyRow, error) {
 
 	row := db.QueryRow(`
 		SELECT a.id, a.analysis_id, a.meter_id, a.type, a.severity, a.confidence, a.priority_score,
-		       a.baseline_kwh, a.actual_kwh, a.variation_pct, a.period_from, a.period_to, a.change_point_at, a.status
+		       a.baseline_kwh, a.actual_kwh, a.variation_pct, a.period_from, a.period_to, a.change_point_at, a.status, a.reason
 		FROM anomalies a
 		WHERE a.meter_id = ? AND a.analysis_id = ?`, meterID, analysisID)
 
 	var a AnomalyRow
 	var periodFrom, periodTo string
-	var changePointAt sql.NullString
+	var changePointAt, reason sql.NullString
 	err = row.Scan(&a.ID, &a.AnalysisID, &a.MeterID, &a.Type, &a.Severity, &a.Confidence, &a.PriorityScore,
-		&a.BaselineKWh, &a.ActualKWh, &a.VariationPct, &periodFrom, &periodTo, &changePointAt, &a.Status)
+		&a.BaselineKWh, &a.ActualKWh, &a.VariationPct, &periodFrom, &periodTo, &changePointAt, &a.Status, &reason)
+	a.Reason = reason.String
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

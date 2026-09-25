@@ -30,7 +30,7 @@ describe("AnomaliesPage", () => {
 
   it("renders the anomalies table when items are present", async () => {
     vi.spyOn(anomaliesApi, "getAnomalies").mockResolvedValue({
-      items: [{ id: 12, meter_id: "M-109", type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, priority_rank: 1, in_range: true, active_from: "2026-09-08T00:00:00Z", active_to: "2026-09-14T23:00:00Z" }],
+      items: [{ id: 12, meter_id: "M-109", type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, priority_rank: 1, in_range: true, active_from: "2026-09-08T00:00:00Z", active_to: "2026-09-14T23:00:00Z", reason: "" }],
     });
 
     render(

@@ -54,6 +54,7 @@ export interface AnomalySummary {
   in_range: boolean;
   active_from: string;
   active_to: string;
+  reason: string;
 }
 
 export interface AnomalySignal {

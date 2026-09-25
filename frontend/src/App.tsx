@@ -10,6 +10,7 @@ import MetersPage from "./pages/MetersPage";
 import MeterDetailPage from "./pages/MeterDetailPage";
 import AnomaliesPage from "./pages/AnomaliesPage";
 import AnomalyDetailPage from "./pages/AnomalyDetailPage";
+import SignalGlossaryPage from "./pages/SignalGlossaryPage";
 
 function ProtectedLayout() {
   const { token } = useAuth();
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/meters/:meterId" element={<MeterDetailPage />} />
             <Route path="/anomalies" element={<AnomaliesPage />} />
             <Route path="/anomalies/:id" element={<AnomalyDetailPage />} />
+            <Route path="/glossary/signals" element={<SignalGlossaryPage />} />
           </Route>
         </Routes>
       </AuthProvider>

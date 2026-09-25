@@ -80,7 +80,7 @@ export default function MetersPage() {
         <thead>
           <tr className="text-left text-slate-400 border-b">
             <th className="p-3">Medidor</th><th className="p-3">Consumo</th><th className="p-3">Variación</th>
-            <th className="p-3">Estado</th><th className="p-3">Anomalía</th>
+            <th className="p-3">Estado</th><th className="p-3">Anomalía</th><th className="p-3">Descripción</th>
           </tr>
         </thead>
         <tbody>
@@ -94,9 +94,15 @@ export default function MetersPage() {
                 {m.anomaly ? (
                   <span className={`inline-flex items-center gap-2 ${m.anomaly.in_range ? "" : "opacity-40"}`}>
                     <SeverityBadge severity={m.anomaly.severity} />
-                    {label(m.anomaly.type)}{!m.anomaly.in_range && " (fuera del rango)"}
+                    {!m.anomaly.in_range && <span className="text-xs text-slate-400">(fuera del rango)</span>}
                   </span>
                 ) : "—"}
+              </td>
+              <td className="p-3 text-slate-500 max-w-md truncate" title={m.anomaly ? `${label(m.anomaly.type)} — ${m.anomaly.reason}` : undefined}>
+                {m.anomaly ? <>
+                  <span className="font-medium text-slate-700">{label(m.anomaly.type)}</span>
+                  {m.anomaly.reason && <>{" — "}{m.anomaly.reason}</>}
+                </> : "—"}
               </td>
             </tr>
           ))}

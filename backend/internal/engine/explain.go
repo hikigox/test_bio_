@@ -5,12 +5,32 @@ import (
 	"strings"
 )
 
+// variableLabel traduce el identificador interno de una variable (el mismo
+// que usa VariableDelta.Variable y evidence.variables[].variable en la API)
+// a su nombre en español para la explicación en lenguaje natural. Solo se usa
+// aquí, en el texto: el identificador crudo se mantiene en evidence.variables
+// porque el frontend ya lo traduce por su cuenta (lib/labels.ts) y otros
+// consumidores de la API pueden depender de ese valor estable.
+var variableLabels = map[string]string{
+	"consumption_kwh": "consumo",
+	"voltage_v":       "voltaje",
+	"current_a":       "corriente",
+	"power_factor":    "factor de potencia",
+}
+
+func variableLabel(v string) string {
+	if label, ok := variableLabels[v]; ok {
+		return label
+	}
+	return v
+}
+
 // BuildReason redacta la explicación por plantilla (02 §8), citando evidencia numérica real.
 func BuildReason(t AnomalyType, variationPct float64, variables []VariableDelta) string {
 	var changed []string
 	for _, v := range variables {
 		if v.Changed {
-			changed = append(changed, fmt.Sprintf("%s %+.1f%%", v.Variable, v.DeltaPct))
+			changed = append(changed, fmt.Sprintf("%s %+.1f%%", variableLabel(v.Variable), v.DeltaPct))
 		}
 	}
 	changedStr := "sin cambios eléctricos coherentes"

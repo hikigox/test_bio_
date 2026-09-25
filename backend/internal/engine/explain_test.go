@@ -9,7 +9,7 @@ func TestBuildReasonRealAnomalyIncludesNumbers(t *testing.T) {
 	if reason == "" {
 		t.Fatal("expected non-empty reason")
 	}
-	if !containsAll(reason, "103.7", "current_a") {
+	if !containsAll(reason, "103.7", "corriente") {
 		t.Fatalf("reason must cite the actual numbers, got %q", reason)
 	}
 }

@@ -28,7 +28,7 @@ describe("DashboardPage", () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(screen.getByText(/3\.000/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("3.000 kWh")).toBeInTheDocument());
     expect(screen.getByText(/2026-09-14 23:00/)).toBeInTheDocument();
   });
 

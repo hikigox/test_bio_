@@ -8,7 +8,7 @@ import * as metersApi from "../api/meters";
 const ITEMS = [
   { meter_id: "M-109", name: "M-109", consumption_kwh: 2180, baseline_kwh: 1070, variation_pct: 103.7,
     status: "CRITICAL" as const, analysis_id: 3,
-    anomaly: { id: 12, type: "REAL_ANOMALY" as const, severity: "HIGH" as const, confidence: 0.96, priority_rank: 1, in_range: true, active_from: "", active_to: "" } },
+    anomaly: { id: 12, type: "REAL_ANOMALY" as const, severity: "HIGH" as const, confidence: 0.96, priority_rank: 1, in_range: true, active_from: "", active_to: "", reason: "Consumo 103.7% por encima del baseline" } },
   { meter_id: "M-999", name: "M-999", consumption_kwh: null, baseline_kwh: null, variation_pct: null,
     status: "UNKNOWN" as const, analysis_id: null, anomaly: null },
 ];

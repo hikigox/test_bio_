@@ -46,6 +46,10 @@ type anomalySummary struct {
 	InRange      bool    `json:"in_range"`
 	ActiveFrom   string  `json:"active_from"`
 	ActiveTo     string  `json:"active_to"`
+	// Reason es la explicación en lenguaje natural de BuildReason (motor,
+	// spec 02 §8), para que /meters pueda mostrar una descripción de la
+	// anomalía sin que el cliente tenga que pedir el detalle completo.
+	Reason string `json:"reason"`
 }
 
 // baselineDetail is the full baseline block on GET /meters/:meterId (spec 03:
@@ -148,6 +152,7 @@ func meterAnalysisFields(s *Server, meterID string, item *meterListItem, ranks m
 		ID: anomaly.ID, Type: anomaly.Type, Severity: anomaly.Severity, Confidence: anomaly.Confidence,
 		PriorityRank: ranks[anomaly.ID], InRange: inRange,
 		ActiveFrom: activeFrom.Format(time.RFC3339), ActiveTo: activeTo.Format(time.RFC3339),
+		Reason: anomaly.Reason,
 	}
 	return analysisID, true, anomaly
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { postAnalyze, getAnalysis } from "../api/analysis";
 import type { AnalyzeScope } from "../api/analysis";
+import { ApiError } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import type { AnalysisStatus } from "../api/types";
 
@@ -18,12 +19,28 @@ export default function RunAnalysisButton({
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: status } = usePolling<AnalysisStatus | null>(
+  const { data: status, error: pollError } = usePolling<AnalysisStatus | null>(
     async () => (analysisId ? getAnalysis(analysisId) : null),
     (data) => data?.status === "COMPLETED" || data?.status === "FAILED",
     1000,
     analysisId ?? "idle"
   );
+
+  // Si el polling falla (p.ej. el backend se reinició con otra base de datos
+  // y este id ya no existe: GET /ai/analysis/:id devuelve 404), sin esto el
+  // botón se quedaba mostrando "Analizando…" para siempre, porque `status`
+  // nunca llega a COMPLETED/FAILED y nada vuelve a liberar `analysisId`.
+  useEffect(() => {
+    if (pollError && analysisId !== null) {
+      setError(
+        pollError instanceof ApiError && pollError.status === 404
+          ? "Se perdió el análisis en curso (el servidor pudo haberse reiniciado). Probá de nuevo."
+          : "Se perdió la conexión con el análisis en curso. Probá de nuevo."
+      );
+      setAnalysisId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollError]);
 
   // Notifica al padre una sola vez por análisis completado: llamarlo en cada
   // render (como haría comprobar la condición directamente en el cuerpo del

@@ -49,8 +49,8 @@ describe("MeterDetailPage", () => {
   it("renders meter info and readings chart, with anomaly band", async () => {
     vi.spyOn(metersApi, "getMeter").mockResolvedValue({
       ...baseMeter,
-      anomaly: { id: 12, type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, priority_rank: 1, in_range: true, active_from: "2026-09-08T00:00:00Z", active_to: "2026-09-14T23:00:00Z" },
-      latest_anomaly: { id: 12, type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, priority_rank: 1, in_range: true, active_from: "2026-09-08T00:00:00Z", active_to: "2026-09-14T23:00:00Z" },
+      anomaly: { id: 12, type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, priority_rank: 1, in_range: true, active_from: "2026-09-08T00:00:00Z", active_to: "2026-09-14T23:00:00Z", reason: "" },
+      latest_anomaly: { id: 12, type: "REAL_ANOMALY", severity: "HIGH", confidence: 0.96, priority_rank: 1, in_range: true, active_from: "2026-09-08T00:00:00Z", active_to: "2026-09-14T23:00:00Z", reason: "" },
     });
     vi.spyOn(metersApi, "getMeterReadings").mockResolvedValue(readings);
     vi.spyOn(metersApi, "getMeterEvents").mockResolvedValue({ items: [] });
