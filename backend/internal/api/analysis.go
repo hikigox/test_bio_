@@ -56,7 +56,18 @@ func registerAnalysisRoutes(r chi.Router, s *Server) {
 		}
 		result, err := loadAnalysisStatus(s.DB, id)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "análisis no encontrado")
+			// Solo "no existe la fila" es un 404 real. Cualquier otro error
+			// (p.ej. "database is locked" bajo la concurrencia real de un
+			// despliegue en Docker, donde el pool de conexiones a un SQLite
+			// file-backed no está pineado a 1 como el de :memory:) es
+			// transitorio, no que el análisis haya desaparecido — reportarlo
+			// como 404 hacía que el frontend mostrara "se perdió el análisis"
+			// para un análisis que en realidad seguía ahí.
+			if err == sql.ErrNoRows {
+				writeError(w, http.StatusNotFound, "análisis no encontrado")
+			} else {
+				writeError(w, http.StatusInternalServerError, "error leyendo el análisis")
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, result)

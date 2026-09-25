@@ -15,7 +15,7 @@ type DB struct {
 // Open opens (or creates) the SQLite database at dbPath. Use ":memory:" for
 // an in-memory database, primarily useful in tests.
 func Open(dbPath string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	sqlDB, err := sql.Open("sqlite", withBusyTimeout(dbPath))
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +41,27 @@ func Open(dbPath string) (*DB, error) {
 	}
 
 	return &DB{sqlDB}, nil
+}
+
+// withBusyTimeout appends a `_pragma=busy_timeout(5000)` DSN param so the
+// driver applies it to EVERY connection it opens (unlike `db.Exec("PRAGMA
+// busy_timeout...")`, which only touches whichever single pooled connection
+// happens to run it — the same "best-effort" gap noted below for
+// foreign_keys). Without this, a file-backed deployment (Docker, where
+// database/sql freely hands out multiple real connections to the same
+// SQLite file — see the MaxOpenConns comment above) hits SQLite's default
+// behavior of failing a query IMMEDIATELY with "database is locked" the
+// moment another connection is mid-write, instead of waiting briefly for the
+// lock to clear. That single spurious error was being reported to the
+// frontend as a permanent 404 "análisis no encontrado" (GET /ai/analysis/:id
+// conflated ANY db error with "row doesn't exist" — see the sql.ErrNoRows
+// check in analysis.go) even though the row existed the whole time.
+func withBusyTimeout(dbPath string) string {
+	sep := "?"
+	if strings.Contains(dbPath, "?") {
+		sep = "&"
+	}
+	return dbPath + sep + "_pragma=busy_timeout(5000)"
 }
 
 // isMemoryDSN reports whether the DSN refers to an in-memory database, either
