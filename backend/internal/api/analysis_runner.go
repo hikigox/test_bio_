@@ -129,6 +129,19 @@ type meterRun struct {
 // una transacción (spec 01: "un análisis escribe... en una transacción").
 func runAnalysis(db *store.DB, analysisID int64, scope AnalysisScope) {
 	startedAt := time.Now()
+
+	// Sin este recover, un panic en el pipeline (p.ej. un dato inesperado en
+	// engine.Run) mata la goroutine con la fila `analyses` todavía en
+	// RUNNING. Como startAnalysisRow rechaza cualquier análisis nuevo mientras
+	// exista una fila RUNNING, eso deja el botón "Run AI Analysis" devolviendo
+	// 409 para siempre, sin que nada la libere.
+	defer func() {
+		if r := recover(); r != nil {
+			db.Exec(`UPDATE analyses SET status='FAILED', error=?, finished_at=? WHERE id=?`,
+				fmt.Sprintf("panic: %v", r), time.Now().UTC().Format(time.RFC3339), analysisID)
+		}
+	}()
+
 	setStage(db, analysisID, "BASELINE", 0.1)
 
 	meterIDs := scope.MeterIDs

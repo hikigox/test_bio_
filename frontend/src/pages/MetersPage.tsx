@@ -7,6 +7,7 @@ import { formatNumberEsES, formatPercent } from "../lib/format";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
 import ErrorState from "../components/ErrorState";
+import { label } from "../lib/labels";
 
 type StatusFilter = "all" | "normal" | "alert" | "critical";
 type SortField = "consumption" | "variation" | "severity";
@@ -93,7 +94,7 @@ export default function MetersPage() {
                 {m.anomaly ? (
                   <span className={`inline-flex items-center gap-2 ${m.anomaly.in_range ? "" : "opacity-40"}`}>
                     <SeverityBadge severity={m.anomaly.severity} />
-                    {m.anomaly.type}{!m.anomaly.in_range && " (fuera del rango)"}
+                    {label(m.anomaly.type)}{!m.anomaly.in_range && " (fuera del rango)"}
                   </span>
                 ) : "—"}
               </td>

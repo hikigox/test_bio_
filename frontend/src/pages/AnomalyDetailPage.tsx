@@ -4,6 +4,7 @@ import { getAnomaly, patchAnomaly } from "../api/anomalies";
 import type { AnomalyDetail } from "../api/types";
 import SeverityBadge from "../components/SeverityBadge";
 import ErrorState from "../components/ErrorState";
+import { label } from "../lib/labels";
 
 export default function AnomalyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -40,7 +41,7 @@ export default function AnomalyDetailPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-start">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">{anomaly.meter_id} — {anomaly.type}</h2>
+          <h2 className="text-xl font-semibold text-slate-900">{anomaly.meter_id} — {label(anomaly.type)}</h2>
           <div className="mt-2 flex gap-2 items-center">
             <SeverityBadge severity={anomaly.severity} />
             <span className="text-xs text-slate-500">Estado: {anomaly.status}</span>
@@ -73,11 +74,11 @@ export default function AnomalyDetailPage() {
 
       <div className="bg-white rounded-lg shadow-sm p-4">
         <h3 className="font-medium text-slate-900 mb-2">Evidencia</h3>
-        <p className="text-xs text-slate-500 mb-1">Ruta de decisión: {decisionPath.join(" → ")}</p>
+        <p className="text-xs text-slate-500 mb-1">Ruta de decisión: {decisionPath.map(label).join(" → ")}</p>
         {dataQualityIssues.length > 0 && (
           <ul className="text-xs text-slate-500">
             {dataQualityIssues.map((iss, i) => (
-              <li key={i}>{iss.kind}: {iss.count}</li>
+              <li key={i}>{label(iss.kind)}: {iss.count}</li>
             ))}
           </ul>
         )}
@@ -89,7 +90,7 @@ export default function AnomalyDetailPage() {
             <p className="text-xs text-slate-500 font-medium">Desglose de confianza</p>
             <ul className="text-xs text-slate-500">
               {Object.entries(anomaly.evidence.confidence_breakdown).map(([k, v]) => (
-                <li key={k}>{k}: {v}</li>
+                <li key={k}>{label(k)}: {v}</li>
               ))}
             </ul>
           </div>
@@ -111,7 +112,7 @@ export default function AnomalyDetailPage() {
             <tbody>
               {variables.map((v) => (
                 <tr key={v.variable} className={v.changed ? "text-red-600 font-medium" : "text-slate-600"}>
-                  <td className="py-1 pr-2">{v.variable}</td>
+                  <td className="py-1 pr-2">{label(v.variable)}</td>
                   <td className="py-1 pr-2">{v.baseline.toFixed(2)}</td>
                   <td className="py-1 pr-2">{v.actual.toFixed(2)}</td>
                   <td className="py-1 pr-2">{v.delta_pct.toFixed(1)}%</td>
@@ -127,7 +128,7 @@ export default function AnomalyDetailPage() {
           <h3 className="font-medium text-slate-900 mb-2">Señales</h3>
           <ul className="text-xs text-slate-600 space-y-1">
             {signals.map((s, i) => (
-              <li key={i}>{s.signal}: observado {s.observed} vs. umbral {s.threshold} — {s.detail}</li>
+              <li key={i}>{label(s.signal)}: observado {s.observed} vs. umbral {s.threshold} — {s.detail}</li>
             ))}
           </ul>
         </div>
@@ -138,7 +139,7 @@ export default function AnomalyDetailPage() {
           <h3 className="font-medium text-slate-900 mb-2">Eventos relacionados</h3>
           <ul className="text-xs text-slate-600 divide-y">
             {events.map((e) => (
-              <li key={e.id} className="py-1">{e.description} ({e.relation}, {e.offset_hours}h)</li>
+              <li key={e.id} className="py-1">{e.description} ({label(e.relation)}, {e.offset_hours}h)</li>
             ))}
           </ul>
         </div>

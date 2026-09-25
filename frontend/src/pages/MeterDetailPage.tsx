@@ -9,6 +9,7 @@ import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
 import RunAnalysisButton from "../components/RunAnalysisButton";
 import ErrorState from "../components/ErrorState";
+import { label } from "../lib/labels";
 
 interface ReadingPoint {
   timestamp: string;
@@ -138,7 +139,7 @@ export default function MeterDetailPage() {
           {anomalies.map((a) => (
             <li key={a.id} className="py-2 flex justify-between items-center">
               <Link to={`/anomalies/${a.id}`} className="text-blue-600 hover:underline">
-                {a.type}
+                {label(a.type)}
               </Link>
               <div className="flex gap-2 items-center">
                 <span className="text-slate-500">{a.status}</span>
@@ -154,7 +155,7 @@ export default function MeterDetailPage() {
         {events.length === 0 && <p className="text-sm text-slate-400">Sin eventos registrados</p>}
         <ul className="text-sm divide-y">
           {events.map((e, i) => (
-            <li key={i} className="py-2">{e.timestamp.slice(0, 10)} · {e.type} — {e.description}</li>
+            <li key={i} className="py-2">{e.timestamp.slice(0, 10)} · {label(e.type)} — {e.description}</li>
           ))}
         </ul>
       </div>

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"energy-management/internal/api"
 	"energy-management/internal/auth"
@@ -37,6 +38,7 @@ func main() {
 	}
 
 	seedIfEmpty(db, dataDir, demoEmail, demoPassword)
+	recoverOrphanedAnalyses(db)
 
 	router := api.NewRouter(&api.Server{DB: db, JWTSecret: jwtSecret})
 	log.Printf("escuchando en :%s", port)
@@ -63,6 +65,23 @@ func seedIfEmpty(db *store.DB, dataDir, demoEmail, demoPassword string) {
 	if userCount == 0 {
 		hash, _ := auth.HashPassword(demoPassword)
 		db.Exec(`INSERT INTO users (email, password_hash) VALUES (?, ?)`, demoEmail, hash)
+	}
+}
+
+// recoverOrphanedAnalyses marca como FAILED cualquier análisis que haya
+// quedado en RUNNING de un proceso anterior (crash o reinicio a mitad de
+// pipeline). Al arrancar, ninguna goroutine está corriendo esas filas, así
+// que dejarlas en RUNNING bloquearía "Run AI Analysis" con 409 para siempre
+// (startAnalysisRow solo permite una fila RUNNING a la vez).
+func recoverOrphanedAnalyses(db *store.DB) {
+	res, err := db.Exec(`UPDATE analyses SET status='FAILED', error='proceso reiniciado antes de terminar', finished_at=?
+		WHERE status='RUNNING'`, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		log.Printf("advertencia: no se pudo limpiar análisis RUNNING huérfanos: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("marcados %d análisis RUNNING huérfanos como FAILED al arrancar", n)
 	}
 }
 

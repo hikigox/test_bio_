@@ -6,6 +6,7 @@ import type { AnomalySummary } from "../api/types";
 import SeverityBadge from "../components/SeverityBadge";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
+import { label } from "../lib/labels";
 
 type Item = AnomalySummary & { meter_id: string };
 
@@ -71,7 +72,7 @@ export default function AnomaliesPage() {
             {sorted.map((a) => (
               <tr key={a.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => navigate(`/anomalies/${a.id}`)}>
                 <td className="p-3 font-medium">{a.meter_id}</td>
-                <td className="p-3">{a.type}</td>
+                <td className="p-3">{label(a.type)}</td>
                 <td className="p-3"><SeverityBadge severity={a.severity} /></td>
                 <td className="p-3">{a.confidence >= 0.85 ? "Alta" : a.confidence >= 0.6 ? "Media" : "Baja"}</td>
                 <td className="p-3">{a.active_from.slice(0, 10)} – {a.active_to.slice(0, 10)}</td>

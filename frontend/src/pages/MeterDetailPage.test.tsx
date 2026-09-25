@@ -121,12 +121,12 @@ describe("MeterDetailPage", () => {
     renderPage();
 
     await waitFor(() => expect(getMeterAnomalies).toHaveBeenCalledWith("M-109", "current"));
-    await waitFor(() => expect(screen.getByText("REAL_ANOMALY")).toBeInTheDocument());
-    expect(screen.queryByText("EXPLAINABLE_ANOMALY")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Anomalía real")).toBeInTheDocument());
+    expect(screen.queryByText("Anomalía explicable por un evento")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /histórico/i }));
 
     await waitFor(() => expect(getMeterAnomalies).toHaveBeenCalledWith("M-109", "history"));
-    await waitFor(() => expect(screen.getByText("EXPLAINABLE_ANOMALY")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Anomalía explicable por un evento")).toBeInTheDocument());
   });
 });

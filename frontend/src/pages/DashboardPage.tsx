@@ -55,8 +55,13 @@ export default function DashboardPage() {
 
       <div className="bg-white rounded-lg shadow-sm p-4">
         <h3 className="font-medium text-slate-900 mb-2">Consumo por medidor</h3>
-        <PieChart width={420} height={300}>
-          <Pie data={summary.by_meter} dataKey="consumption_kwh" nameKey="meter_id" cx="50%" cy="50%" outerRadius={100}
+        {/* Leyenda vertical a la derecha: con 12 medidores y etiquetas largas
+            ("M-101: 14.988 kWh (9.6 %)"), la leyenda horizontal por defecto de
+            recharts no reserva su propio espacio y termina superpuesta sobre
+            el pastel. layout="vertical" + align="right" la saca a una columna
+            aparte del ancho total del chart. */}
+        <PieChart width={620} height={320}>
+          <Pie data={summary.by_meter} dataKey="consumption_kwh" nameKey="meter_id" cx="35%" cy="50%" outerRadius={110}
             onClick={(entry) => navigate(`/meters/${entry.payload?.meter_id}`)}>
             {summary.by_meter.map((m) => (
               // Marca visual de severidad: contorno para medidores con
@@ -77,6 +82,10 @@ export default function DashboardPage() {
             ]}
           />
           <Legend
+            layout="vertical"
+            align="right"
+            verticalAlign="middle"
+            wrapperStyle={{ fontSize: 12, lineHeight: "18px", maxHeight: 300, overflowY: "auto" }}
             onClick={(entry) => navigate(`/meters/${entry.value}`)}
             formatter={(value, entry) => {
               // recharts' Legend payload item carries the original Pie datum
