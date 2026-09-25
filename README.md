@@ -19,7 +19,13 @@ Login en `http://localhost:3000` con el usuario demo:
 (Ver [docs de Docker](specs/06-docker.md) para detalle de servicios, variables
 de entorno y `make reset`/`make logs`/`make eval`.)
 
+Para sobreescribir los defaults (JWT_SECRET, credenciales demo), copiar
+`.env.example` a `.env`.
+
 ### Modo desarrollo (sin Docker)
+
+Requiere Go >= 1.26.5 (ver `backend/go.mod`) y Node >= 20 (ver la imagen base
+`node:20-alpine` de `frontend/Dockerfile`).
 
 Backend (desde `backend/`):
 ```bash
